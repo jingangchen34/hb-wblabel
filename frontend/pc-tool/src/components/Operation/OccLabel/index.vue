@@ -22,15 +22,17 @@
             <button :class="{ active: state.enabled }" @click="toggleBrush">
                 {{ state.enabled ? 'Brush On' : 'Brush Off' }}
             </button>
+            <button @click="fillSelectedBox">Fill Box</button>
             <button @click="saveLabels">Save</button>
         </div>
-        <div class="hint">Press and drag in the point cloud view to relabel points.</div>
+        <div class="hint">Brush points, or select a 3D box and fill all points inside it.</div>
     </div>
 </template>
 
 <script setup lang="ts">
     import { reactive, onBeforeUnmount } from 'vue';
     import * as THREE from 'three';
+    import { Box } from 'pc-render';
     import { useInjectEditor } from '../../../state';
     import * as api from '../../../api';
 
@@ -57,6 +59,8 @@
         radius: 12,
     });
     const screenPos = new THREE.Vector3();
+    const boxPoint = new THREE.Vector3();
+    const boxInvertMatrix = new THREE.Matrix4();
 
     function getMainCanvas() {
         const view = editor.viewManager.getMainView();
@@ -148,6 +152,54 @@
         }
     }
 
+    function getSelectedBox() {
+        return editor.pc.selection.find((item) => item instanceof Box) as Box | undefined;
+    }
+
+    function getPointIndicesInBox(box: Box) {
+        const points = getPoints();
+        if (!points) return [];
+
+        const position = points.geometry.getAttribute('position') as THREE.BufferAttribute;
+        if (!position) return [];
+
+        box.updateMatrixWorld();
+        if (!box.geometry.boundingBox) box.geometry.computeBoundingBox();
+        const bounds = box.geometry.boundingBox;
+        if (!bounds) return [];
+
+        boxInvertMatrix.copy(box.matrixWorld).invert();
+        const indices: number[] = [];
+        for (let index = 0; index < position.count; index++) {
+            boxPoint.fromBufferAttribute(position, index).applyMatrix4(boxInvertMatrix);
+            if (bounds.containsPoint(boxPoint)) indices.push(index);
+        }
+        return indices;
+    }
+
+    function fillSelectedBox() {
+        const labels = editor.pc.exportPointLabels();
+        if (!labels) {
+            editor.showMsg('warning', 'No OCC labels loaded');
+            return;
+        }
+
+        const box = getSelectedBox();
+        if (!box) {
+            editor.showMsg('warning', 'Select a 3D box first');
+            return;
+        }
+
+        const indices = getPointIndicesInBox(box);
+        if (indices.length === 0) {
+            editor.showMsg('warning', 'No points inside selected box');
+            return;
+        }
+
+        editor.pc.setPointLabelByIndices(indices, state.label, colorMap);
+        editor.showMsg('success', `Relabeled ${indices.length} points`);
+    }
+
     async function saveLabels() {
         const frame = editor.getCurrentFrame();
         const labels = editor.pc.exportPointLabels();
@@ -228,7 +280,7 @@
 
         .actions {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr;
             gap: 6px;
             margin-top: 10px;
         }

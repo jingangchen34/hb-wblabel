@@ -12,14 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN npm config set registry https://registry.npmmirror.com
 RUN npm config set unsafe-perm true
-COPY . .
+COPY main/package*.json ./main/
+COPY image-tool/package*.json ./image-tool/
+COPY pc-tool/package*.json ./pc-tool/
+COPY text-tool/package*.json ./text-tool/
 RUN cd main && npm install
-RUN cd main && npm run build
 RUN cd image-tool && npm install
-RUN cd image-tool && npm run build
 RUN cd pc-tool && npm install
-RUN cd pc-tool && npm run build
 RUN cd text-tool && npm install
+COPY . .
+RUN cd main && npm run build
+RUN cd image-tool && npm run build
+RUN cd pc-tool && npm run build
 RUN cd text-tool && npm run build
 
 FROM docker.m.daocloud.io/library/nginx:1.22

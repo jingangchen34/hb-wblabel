@@ -34,18 +34,32 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
     let viewConfig = [] as IImgViewConfig[];
     let pointsUrl = '';
     let labelUrl = '';
+    let pointCacheUrl = '';
+    const regPointCache = new RegExp(/point(_?)cloud(_?)cache|point(_?)cache/i);
     const regLidar = new RegExp(/point(_?)cloud/i);
     const regLabel = new RegExp(/occ.*label|label/i);
     const regImage = new RegExp(/image/i);
+    const regUndistortedImage = new RegExp(/cylindrical|undistort|rectified/i);
+    const maxCameraIndex = Math.max(fileConfig.length, cameraInfo.length, 16);
     fileConfig.forEach((e) => {
-        if (regLidar.test(e.dirName)) {
+        if ((regPointCache.test(e.dirName) || /\.xyzl$/i.test(e.name)) && /\.xyzl$/i.test(e.name)) {
+            pointCacheUrl = e.url;
+        } else if (regLidar.test(e.dirName) && /\.(bin|pcd)$/i.test(e.name)) {
             pointsUrl = e.url;
         } else if (regLabel.test(e.dirName) && /\.label$/i.test(e.name)) {
             labelUrl = e.url;
-        } else if (regImage.test(e.dirName)) {
-            const match = e.dirName.match(/[0-9]{1,10}$/);
-            const index = match ? +match[0] : viewConfig.length;
-            viewConfig[index] = {
+        } else if (
+            regImage.test(e.dirName) &&
+            !regUndistortedImage.test(e.dirName) &&
+            !regUndistortedImage.test(e.name)
+        ) {
+            const match = e.dirName.match(/(?:^|[_-])(\d{1,3})$/);
+            const parsedIndex = match ? Number.parseInt(match[1], 10) : NaN;
+            const index =
+                Number.isFinite(parsedIndex) && parsedIndex >= 0 && parsedIndex < maxCameraIndex
+                    ? parsedIndex
+                    : viewConfig.length;
+            const imageConfig = {
                 cameraInternal: { fx: 0, fy: 0, cx: 0, cy: 0 },
                 cameraExternal: [],
                 imgSize: [0, 0],
@@ -53,6 +67,8 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
                 name: e.name,
                 imgObject: null as any,
             };
+            if (index === viewConfig.length) viewConfig.push(imageConfig);
+            else viewConfig[index] = imageConfig;
         }
     });
     viewConfig = viewConfig.filter((e) => !!e);
@@ -73,7 +89,7 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
         ? viewConfig.filter((e) => e.cameraExternal.length === 16 && e.cameraInternal)
         : viewConfig;
 
-    return { pointsUrl, labelUrl, config: viewConfig };
+    return { pointsUrl: pointCacheUrl || pointsUrl, labelUrl: pointCacheUrl ? '' : labelUrl, pointCacheUrl, config: viewConfig };
 }
 
 export function rand(start: number, end: number) {

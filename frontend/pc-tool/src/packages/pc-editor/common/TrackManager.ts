@@ -182,7 +182,7 @@ export default class TrackManager {
         const { frames, frameIndex } = this.editor.state;
 
         const targetTrackId = config.userData.trackId || this.editor.createTrackId();
-        const trackName = this.editor.getId();
+        const trackName = targetTrackId;
         Object.assign(config.userData, {
             trackId: targetTrackId,
             trackName,

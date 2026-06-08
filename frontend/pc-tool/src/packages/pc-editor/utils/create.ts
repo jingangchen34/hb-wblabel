@@ -6,11 +6,19 @@ import { Box, Rect, Box2D, Vector2Of4 } from 'pc-render';
 
 export function setIdInfo(editor: Editor, userData: IUserData) {
     if (!userData.id) userData.id = THREE.MathUtils.generateUUID();
-    if (!userData.trackId) {
-        userData.trackId = nanoid(16);
+    const sourceTrackId = (userData as any).TrackID ?? userData.trackID;
+    if (sourceTrackId !== undefined && sourceTrackId !== '') {
+        userData.trackId = String(sourceTrackId);
     }
+    if (!userData.trackId) {
+        userData.trackId = editor.createTrackId();
+    }
+    if (userData.trackID === undefined || userData.trackID === '') {
+        userData.trackID = userData.trackId;
+    }
+    (userData as any).TrackID = userData.trackID;
     if (!userData.trackName) {
-        userData.trackName = editor.getId();
+        userData.trackName = userData.trackId;
     }
 }
 

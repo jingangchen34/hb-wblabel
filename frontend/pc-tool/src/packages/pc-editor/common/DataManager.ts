@@ -371,7 +371,6 @@ export default class DataManager {
         frameId = frameId || curFrame.id;
         let objects = this.getFrameObject(frameId) || [];
 
-        let startId = this.getMaxId(frameId) + 1;
         objects.forEach((e) => {
             let userData = e.userData as IUserData;
             userData.id = userData.id || THREE.MathUtils.generateUUID();
@@ -379,7 +378,8 @@ export default class DataManager {
             if (userData.trackId) return;
 
             userData.trackId = this.editor.createTrackId();
-            userData.trackName = startId++ + '';
+            userData.trackID = userData.trackId;
+            userData.trackName = userData.trackId;
         });
 
         // if (curFrame && frameId === curFrame.id) this.editor.idCount = startId;
@@ -413,6 +413,22 @@ export default class DataManager {
         return this.track({
             direction: 'FORWARD',
             object: 'select',
+            method: 'copy',
+            frameN: 1,
+        });
+    }
+    copyAllForward() {
+        return this.track({
+            direction: 'FORWARD',
+            object: 'all',
+            method: 'copy',
+            frameN: 1,
+        });
+    }
+    copyAllBackWard() {
+        return this.track({
+            direction: 'BACKWARD',
+            object: 'all',
             method: 'copy',
             frameN: 1,
         });

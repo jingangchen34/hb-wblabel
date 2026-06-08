@@ -1,7 +1,9 @@
 FROM docker.m.daocloud.io/library/maven:3.8-openjdk-11
 WORKDIR /build
-ADD . .
-RUN mvn package
+COPY pom.xml .
+RUN mvn -q -DskipTests dependency:go-offline
+COPY src ./src
+RUN mvn -q -DskipTests package
 
 RUN apt update && \
     apt install -y iputils-ping curl wget netcat python3 python3-pip git

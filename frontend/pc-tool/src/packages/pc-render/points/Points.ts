@@ -60,12 +60,19 @@ export default class Points extends THREE.Points implements IPoints {
     }
 
     updateData(data: IData) {
+        const startedAt = performance.now();
         let geometry = this.geometry as THREE.BufferGeometry;
         // let position = data.position as number[];
         // let oldPosition = geometry.getAttribute('position') as THREE.Float32BufferAttribute;
 
         geometry.dispose();
+        const createGeometryStartedAt = performance.now();
         this.geometry = createGeometry(data);
+        console.log(
+            `[pc-perf] step=createGeometry points=${this.geometry.getAttribute('position').count} ms=${Math.round(
+                performance.now() - createGeometryStartedAt,
+            )}`,
+        );
 
         // if (oldPosition.count < position.length / oldPosition.itemSize) {
         //     geometry.dispose();
@@ -83,10 +90,17 @@ export default class Points extends THREE.Points implements IPoints {
         // this.setBufferAttribute(colorAttr, data.color || []);
         // }
 
+        const boundingSphereStartedAt = performance.now();
         this.geometry.computeBoundingSphere();
+        console.log(
+            `[pc-perf] step=computeBoundingSphere ms=${Math.round(
+                performance.now() - boundingSphereStartedAt,
+            )}`,
+        );
         this.pointLabels = data.pointLabels;
         this.pointFields = data.pointFields;
         this.dispatchEvent({ type: Event.POINTS_CHANGE });
+        console.log(`[pc-perf] step=Points.updateData ms=${Math.round(performance.now() - startedAt)}`);
     }
 
     updatePointLabels(labels: Uint8Array, color: Uint8Array) {

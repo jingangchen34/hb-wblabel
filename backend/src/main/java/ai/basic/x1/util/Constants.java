@@ -104,6 +104,11 @@ public interface Constants {
     String NPZ_SUFFIX = "NPZ";
 
     /**
+     * .XYZL preprocessed xyz + label point cache
+     */
+    String XYZL_SUFFIX = "XYZL";
+
+    /**
      * .JSON
      */
     String JSON_SUFFIX = ".JSON";
