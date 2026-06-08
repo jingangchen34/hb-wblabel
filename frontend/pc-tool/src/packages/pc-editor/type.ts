@@ -94,6 +94,7 @@ export interface IObjectV2 {
     createdBy?: number;
     createdAt?: string;
 
+    trackID?: string | number;
     trackId?: string;
     trackName?: string;
     classId?: string;
@@ -124,6 +125,7 @@ export interface IObjectV2 {
 export interface IUserData {
     id?: string;
     // track id
+    trackID?: string | number;
     trackId?: string;
     trackName?: string;
     isProjection?: boolean;
@@ -359,6 +361,7 @@ export interface IFrame {
     pointsUrl: string;
     occUrl?: string;
     labelUrl?: string;
+    pointCacheUrl?: string;
     binPointDim?: number;
     labelColorMap?: Record<number, string>;
     queryTime: string;
@@ -428,6 +431,7 @@ export interface IDataResource {
     // position
     pointsUrl: string;
     labelUrl?: string;
+    pointCacheUrl?: string;
     binPointDim?: number;
     labelColorMap?: Record<number, string>;
     pointsData: Record<PointAttr, PointAttrValue>;

@@ -104,6 +104,7 @@ export default class ViewManager {
 
     setImgViews(configs: IImgViewConfig[]) {
         let { state, pc } = this.editor;
+        configs = configs.filter((config) => !!config?.imgObject);
         state.imgViews = configs;
         if (state.imgViews.length === 0) {
             state.config.showImgView = false;

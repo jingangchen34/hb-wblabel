@@ -128,36 +128,29 @@
             });
         }
 
-        if (editor.state.config.showLabel) {
-            objects.forEach((e) => {
-                if (!e.visible) return;
-                let userData = e.userData as IUserData;
-                let classType = userData.classType || '';
-                let classConfig = editor.getClassType(userData);
-                let className = classConfig
-                    ? classConfig.label || classConfig.name || ''
-                    : classType;
+        objects.forEach((e) => {
+            if (!e.visible) return;
+            let userData = e.userData as IUserData;
+            const trackID =
+                (userData as any).TrackID ?? userData.trackID ?? userData.trackId ?? userData.trackName ?? '';
 
-                pos.set(0, 0, 0);
-                pos.applyMatrix4(e.matrixWorld);
-                pos.applyMatrix4(matrix);
-                pos.x = ((pos.x + 1) / 2) * view.width;
-                pos.y = (-(pos.y - 1) / 2) * view.height;
-                // pos.z = 0;
+            pos.set(e.scale.x / 2, e.scale.y / 2, e.scale.z / 2);
+            pos.applyMatrix4(e.matrixWorld);
+            pos.applyMatrix4(matrix);
+            pos.x = ((pos.x + 1) / 2) * view.width;
+            pos.y = (-(pos.y - 1) / 2) * view.height;
+            // pos.z = 0;
 
-                if (Math.abs(pos.z) > 1) return;
+            if (Math.abs(pos.z) > 1) return;
 
-                // let subId = (userData.id + '').slice(-4);
-                let trackName = userData.trackName || '';
-                let obj = {
-                    name: classType ? `${className}-${trackName}` : `${trackName}`,
-                    x: pos.x,
-                    y: pos.y,
-                    scale: 1,
-                };
-                list.push(obj);
-            });
-        }
+            let obj = {
+                name: `ID:${trackID}`,
+                x: pos.x + 8,
+                y: pos.y - 8,
+                scale: 1,
+            };
+            list.push(obj);
+        });
         state.labels = list;
         state.lineLabels = list1;
     };

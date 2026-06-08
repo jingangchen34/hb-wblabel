@@ -40,6 +40,8 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
 
             if (object) {
                 let updateData = object.userData as IUserData;
+                updateData.trackID = userData.trackID ?? userData.trackId;
+                updateData.trackId = userData.trackId;
                 updateData.trackName = userData.trackName;
                 // updateData.resultType = userData.resultType;
                 // updateData.isStandard = userData.isStandard;

@@ -32,7 +32,7 @@ export function view(): IPageHandler {
             await loadDataSetInfo();
             await loadUserInfo();
             await Promise.all([loadDateSetClassification(), loadClasses(), loadDataInfo()]);
-            if (state.isSeriesFrame) {
+            if (state.isSeriesFrame && query.focus) {
                 await editor.loadManager.loadAllObjects();
                 // await editor.loadManager.loadAllClassification();
             }

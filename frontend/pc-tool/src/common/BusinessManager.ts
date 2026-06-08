@@ -18,9 +18,19 @@ export default class BusinessManager extends BaseBusinessManager {
     }
 
     async loadFrameConfig(data: IFrame): Promise<IDataResource> {
+        const startedAt = performance.now();
+        const logStep = (step: string, stepStartedAt: number) => {
+            console.log(
+                `[pc-perf] frame=${data.id} step=loadFrameConfig.${step} ms=${Math.round(
+                    performance.now() - stepStartedAt,
+                )} total=${Math.round(performance.now() - startedAt)}`,
+            );
+        };
         const regLidar = new RegExp(/point(_?)cloud/i);
         const regConfig = new RegExp(/camera(_?)config/i);
+        const dataFileStartedAt = performance.now();
         let { configs: fileConfig, name } = await api.getDataFile(data.id + '');
+        logStep('getDataFile', dataFileStartedAt);
         if (fileConfig.filter((e) => regLidar.test(e.dirName)).length === 0) {
             throw this.editor.lang('no-point-data');
         }
@@ -29,13 +39,18 @@ export default class BusinessManager extends BaseBusinessManager {
         // no camera config
         let cameraInfo = [];
         if (cameraConfig) {
+            const cameraStartedAt = performance.now();
             cameraInfo = await api.getUrl(cameraConfig.url);
+            logStep('getCameraConfig', cameraStartedAt);
         }
 
+        const viewConfigStartedAt = performance.now();
         let info = utils.createViewConfig(fileConfig, cameraInfo);
+        logStep('createViewConfig', viewConfigStartedAt);
         let config: IDataResource = {
             pointsUrl: info.pointsUrl,
             labelUrl: info.labelUrl,
+            pointCacheUrl: info.pointCacheUrl,
             binPointDim: 7,
             pointsData: {},
             viewConfig: info.config,

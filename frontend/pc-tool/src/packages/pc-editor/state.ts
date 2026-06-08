@@ -168,6 +168,6 @@ function getDefaultConfig(): IConfig {
         limitRect2Image: true,
         withoutTaskId: withoutTaskId,
         boxMethod: 'AI',
-        autoLoad: false,
+        autoLoad: true,
     };
 }

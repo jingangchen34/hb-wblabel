@@ -7,6 +7,16 @@
         </span>
     </div>
     <div class="class-list">
+        <div class="track-id-editor" v-if="!state.isBatch">
+            <span class="track-id-label">Track ID</span>
+            <a-input
+                size="small"
+                :disabled="!canEdit()"
+                v-model:value="iState.trackId"
+                @pressEnter="onTrackIdCommit"
+                @blur="onTrackIdCommit"
+            />
+        </div>
         <div class="classType-tag-container">
             <a-tag
                 class="classType-tag"
@@ -74,7 +84,7 @@
     }
 
     // ***************Props and Emits***************
-    let emit = defineEmits(['change']);
+    let emit = defineEmits(['change', 'track-id-change']);
     let props = defineProps<IProps>();
     // *********************************************
     let { canEdit } = useUI();
@@ -84,6 +94,7 @@
         classType: '',
         newClassType: '',
         newClassName: '',
+        trackId: '',
     });
 
     let $$ = editor.bindLocale(locale);
@@ -110,6 +121,25 @@
             immediate: true,
         },
     );
+
+    watch(
+        () => props.state.trackId,
+        () => {
+            iState.trackId = props.state.trackId || '';
+        },
+        {
+            immediate: true,
+        },
+    );
+
+    function onTrackIdCommit() {
+        const trackId = `${iState.trackId || ''}`.trim();
+        if (!trackId || trackId === props.state.trackId) {
+            iState.trackId = props.state.trackId || '';
+            return;
+        }
+        emit('track-id-change', trackId);
+    }
 
     function onClassChange(classConfig: IClassType) {
         editor.blurPage();
@@ -189,6 +219,27 @@
         return items.join(' | ');
     }
 </script>
+
+<style lang="less" scoped>
+    .track-id-editor {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+
+        .track-id-label {
+            width: 64px;
+            color: #aaaaaa;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .ant-input {
+            flex: 1;
+            min-width: 0;
+        }
+    }
+</style>
 
 <style lang="less" scoped>
     .classType-tag {

@@ -36,7 +36,6 @@ import handleHack from './hack';
 import * as _ from 'lodash';
 import * as THREE from 'three';
 import Event from './config/event';
-import { nanoid } from 'nanoid';
 import Mustache from 'mustache';
 import BSError from './common/BSError';
 import * as locale from './lang';
@@ -206,7 +205,7 @@ export default class Editor extends THREE.EventDispatcher {
     }
     // trackId
     createTrackId() {
-        return nanoid(16);
+        return this.getId();
     }
 
     // trackName

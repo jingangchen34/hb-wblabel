@@ -29,10 +29,19 @@ export default class ConfigManager {
         config.pointInfo.vCount = await countVisiblePointN(positions, config.heightRange);
     }, 50);
     updatePointConfig(ground: number, intensityRange?: [number, number]) {
+        const startedAt = performance.now();
         let { config } = this.editor.state;
         let points = this.editor.pc.groupPoints.children[0] as Points;
 
-        if (!points.geometry.boundingBox) points.geometry.computeBoundingBox();
+        if (!points.geometry.boundingBox) {
+            const boundingBoxStartedAt = performance.now();
+            points.geometry.computeBoundingBox();
+            console.log(
+                `[pc-perf] step=computeBoundingBox ms=${Math.round(
+                    performance.now() - boundingBoxStartedAt,
+                )}`,
+            );
+        }
         let boundingBox = points.geometry.boundingBox as THREE.Box3;
         let position = points.geometry.getAttribute('position') as THREE.BufferAttribute;
         const color = points.geometry.getAttribute('color') as THREE.BufferAttribute;
@@ -84,5 +93,6 @@ export default class ConfigManager {
             pointVelocity: new THREE.Vector2().fromArray(config.pointVelocity),
             heightRange: new THREE.Vector2().fromArray(config.heightRange),
         });
+        console.log(`[pc-perf] step=updatePointConfig ms=${Math.round(performance.now() - startedAt)}`);
     }
 }

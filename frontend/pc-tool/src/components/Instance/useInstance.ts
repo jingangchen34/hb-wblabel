@@ -331,6 +331,7 @@ export default function useInstance() {
                     annotateType: '',
                     visible: false,
                     isModel: isModel,
+                    trackId,
                     data: [],
                     attrLabel: '',
                     active: oldActive[trackMapId] || [],

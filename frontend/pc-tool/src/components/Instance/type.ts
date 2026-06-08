@@ -10,6 +10,7 @@ export interface IItem {
     visible: boolean;
     data: IItem[];
     isModel: boolean;
+    trackId?: string;
     attrLabel?: string;
     hasAnnotation?: boolean;
     invisible?: boolean;

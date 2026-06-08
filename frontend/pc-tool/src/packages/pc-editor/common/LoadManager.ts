@@ -29,7 +29,7 @@ export default class LoadManager {
         try {
             await this.editor.getResultSources();
             await Promise.all([this.loadObjectAndClassification(), this.loadResource()]);
-            // if (!this.editor.playManager.playing) this.editor.dataResource.load();
+            if (!this.editor.playManager.playing) this.editor.dataResource.load();
         } catch (error: any) {
             this.editor.handleErr(error);
         }
@@ -114,11 +114,23 @@ export default class LoadManager {
         this.setTrackData(objectMap);
     }
     setTrackData(objectsMap: Record<string, IObject[]>) {
+        const maxTrackId = getMaxId(
+            Object.keys(objectsMap).flatMap((frameId) => objectsMap[frameId] || []),
+        );
+        this.editor.idCount = Math.max(this.editor.idCount, maxTrackId + 1);
+
         // update trackId
         Object.keys(objectsMap).forEach((frameId) => {
             const objects = objectsMap[frameId] || [];
             objects.forEach((obj) => {
+                const sourceTrackId = (obj as any).TrackID ?? obj.trackID;
+                if (!obj.trackId && sourceTrackId !== undefined && sourceTrackId !== '') {
+                    obj.trackId = String(sourceTrackId);
+                }
                 if (!obj.trackId) obj.trackId = this.editor.createTrackId();
+                if (obj.trackID === undefined || obj.trackID === '') obj.trackID = obj.trackId;
+                (obj as any).TrackID = obj.trackID;
+                if (!obj.trackName) obj.trackName = obj.trackId;
             });
         });
 
@@ -139,8 +151,9 @@ export default class LoadManager {
         function getMaxId(objects: Partial<IObject>[]) {
             let maxId = 0;
             objects.forEach((e) => {
-                if (!e.trackName) return;
-                const id = parseInt(e.trackName);
+                const rawId = (e as any).TrackID ?? e.trackID ?? e.trackId ?? e.trackName;
+                if (rawId === undefined || rawId === '') return;
+                const id = parseInt(String(rawId));
                 if (id > maxId) maxId = id;
             });
             return maxId;

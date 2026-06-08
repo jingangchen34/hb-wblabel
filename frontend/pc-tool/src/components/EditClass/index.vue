@@ -29,7 +29,11 @@
                             </span>
                         </div>
                     </div>
-                    <ObjectClass @change="onClassChange" :state="state" />
+                    <ObjectClass
+                        @change="onClassChange"
+                        @track-id-change="onTrackIdChange"
+                        :state="state"
+                    />
                 </a-collapse-panel>
 
                 <a-collapse-panel v-show="state.attrs.length > 0" key="attribute">
@@ -130,6 +134,7 @@
         update,
         control,
         onAttChange,
+        onTrackIdChange,
         onClassChange,
         onInstanceRemove,
         onToggleObjectsVisible,

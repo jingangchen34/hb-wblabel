@@ -6,7 +6,7 @@ import * as utils from '../utils';
 import Event from '../config/event';
 import { IImgViewConfig } from 'pc-editor';
 
-export type LoadMode = 'near_2' | 'all';
+export type LoadMode = 'current' | 'near_2' | 'all';
 export class ResourceLoader {
     manual: boolean = false;
     data: IFrame;
@@ -22,15 +22,24 @@ export class ResourceLoader {
             (e) => e.data.id !== this.data.id,
         );
 
-        setTimeout(() => {
+        const delay = this.manual ? 250 : 500;
+        window.setTimeout(() => {
             this.dataResource.load();
-        });
+        }, delay);
     }
     get() {
         return this.promise;
     }
     load() {
         let promise: Promise<IDataResource> = new Promise(async (resolve, reject) => {
+            const startedAt = performance.now();
+            const logStep = (step: string, stepStartedAt: number) => {
+                console.log(
+                    `[pc-perf] frame=${this.data.id} step=${step} ms=${Math.round(
+                        performance.now() - stepStartedAt,
+                    )} total=${Math.round(performance.now() - startedAt)}`,
+                );
+            };
             try {
                 let config = this.dataResource.dataMap[this.data.id];
                 this.data.loadState = 'loading';
@@ -41,7 +50,9 @@ export class ResourceLoader {
                 });
 
                 if (!config) {
+                    const stepStartedAt = performance.now();
                     config = await this.dataResource.loadDataConfig(this.data);
+                    logStep('loadDataConfig', stepStartedAt);
                 }
 
                 // test resource
@@ -49,30 +60,41 @@ export class ResourceLoader {
                 //     config.pointsUrl = '/case-padaset/00.pcd';
                 // }
 
-                if (config.viewConfig.length > 0) {
-                    // if (!import.meta.env.DEV) {
-                    await this.dataResource.loadImage(config.viewConfig);
-                    // }
-                }
-
+                const loadPointsStartedAt = performance.now();
                 let pointsData = await this.dataResource.loadPoints(
                     config.pointsUrl,
                     this.handleProgress,
                     {
                         labelUrl: config.labelUrl,
+                        pointCacheUrl: config.pointCacheUrl,
                         binPointDim: config.binPointDim,
                         labelColorMap: config.labelColorMap,
                     },
                 );
+                logStep('loadPoints', loadPointsStartedAt);
 
+                const pointInfoStartedAt = performance.now();
                 let pointsInfo = this.dataResource.calculatePointInfo(pointsData);
+                logStep('calculatePointInfo', pointInfoStartedAt);
 
                 config.time = Date.now();
                 config.pointsData = pointsData;
                 config.ground = pointsInfo.ground;
                 config.intensityRange = pointsInfo.intensityRange;
 
+                const setResourceStartedAt = performance.now();
                 this.dataResource.setResource(this.data, config);
+                logStep('setResource', setResourceStartedAt);
+                const imagePromise = this.manual && config.viewConfig.length > 0
+                    ? this.dataResource.loadImage(config.viewConfig, this.data.id + '')
+                    : Promise.resolve();
+                imagePromise.then(() => {
+                    if (this.dataResource.editor.getCurrentFrame()?.id === this.data.id) {
+                        this.dataResource.editor.viewManager.setImgViews(config.viewConfig);
+                    }
+                }).catch((error) => {
+                    console.warn(`load image: ${this.data.id} err`, error);
+                });
 
                 console.log(`load resource: ${this.data.id} completed`);
                 this.data.loadState = 'complete';
@@ -107,7 +129,7 @@ export class ResourceLoader {
 
 export default class DataResource {
     loadMax: number = 500;
-    loadMode: LoadMode = 'near_2';
+    loadMode: LoadMode = 'current';
     editor: Editor;
     dataMap: Record<string, IDataResource> = {};
     loaders: ResourceLoader[] = [];
@@ -126,7 +148,8 @@ export default class DataResource {
         return await this.editor.businessManager.loadFrameConfig(data);
     }
 
-    async loadImage(viewConfigs: IImgViewConfig[]) {
+    async loadImage(viewConfigs: IImgViewConfig[], frameId?: string) {
+        const startedAt = performance.now();
         let requests = [] as Promise<HTMLImageElement | null>[];
 
         viewConfigs.forEach((config) => {
@@ -138,6 +161,12 @@ export default class DataResource {
         if (requests.length) {
             await Promise.all(requests);
         }
+
+        console.log(
+            `[pc-perf] frame=${frameId || ''} step=loadImage ms=${Math.round(
+                performance.now() - startedAt,
+            )} images=${requests.length}`,
+        );
 
         if (viewConfigs.filter((e) => !e.imgObject).length > 0) throw 'load image error';
 
@@ -187,7 +216,7 @@ export default class DataResource {
     async loadPoints(
         pointsUrl: string,
         onProgress?: (percent: number) => void,
-        option?: Pick<IDataResource, 'labelUrl' | 'binPointDim' | 'labelColorMap'>,
+        option?: Pick<IDataResource, 'labelUrl' | 'pointCacheUrl' | 'binPointDim' | 'labelColorMap'>,
     ): Promise<any> {
         return new Promise((resolve, reject) => {
             const onLoad = (data: any) => resolve(data);
@@ -195,7 +224,12 @@ export default class DataResource {
                 if (onProgress) onProgress(e.loaded / e.total);
             };
             const onError = (error?: any) => reject(error);
-            if (option?.labelUrl) {
+            if (option?.pointCacheUrl || /\.xyzl($|\?)/i.test(pointsUrl)) {
+                this.labelBinLoader.load(pointsUrl, onLoad, onProgressInner, onError, {
+                    pointCache: true,
+                    colorMap: option?.labelColorMap,
+                });
+            } else if (option?.labelUrl) {
                 this.labelBinLoader.load(pointsUrl, onLoad, onProgressInner, onError, {
                     labelUrl: option.labelUrl,
                     pointDim: option.binPointDim || 7,
@@ -245,10 +279,15 @@ export default class DataResource {
             let data = frames[i];
             if (data.loadState !== '') continue;
 
-            let weight = 100000 - i;
             let isNear2 = Math.abs(i - fromIndex) <= 1;
-            weight = isNear2 ? Infinity : weight;
-            if (this.loadMode === 'all' || (this.loadMode === 'near_2' && isNear2)) {
+            let isFuture = i >= fromIndex;
+            let weight = isFuture ? 100000 - (i - fromIndex) : 1000 - (fromIndex - i);
+            weight = isNear2 ? Infinity - Math.abs(i - fromIndex) : weight;
+            if (
+                this.loadMode === 'all' ||
+                (this.loadMode === 'near_2' && isNear2) ||
+                (this.loadMode === 'current' && i === fromIndex)
+            ) {
                 if (weight > maxWeight) {
                     maxWeight = weight;
                     nextDataIndex = i;

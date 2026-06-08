@@ -23,6 +23,16 @@ export interface IClass {
     value: string;
     selected: boolean;
 }
+
+interface IProjectResult {
+    addN?: number;
+    updateN?: number;
+    deleteN?: number;
+    viewN?: number;
+    sourceN?: number;
+    inImageN?: number;
+    reason?: string;
+}
 export default function useTool() {
     let editor = useInjectEditor();
     let innerState = reactive({
@@ -73,7 +83,7 @@ export default function useTool() {
         editor.pc.render();
     }
 
-    function project() {
+    async function project() {
         let selection = editor.pc.selection;
 
         if (selection.length > 0) {
@@ -82,20 +92,22 @@ export default function useTool() {
                 editor.showMsg('warning', 'Please Select a 3D Result');
                 return;
             }
-            editor.actionManager.execute('projectObject2D', {
+            const result = await editor.actionManager.execute('projectObject2D', {
                 createFlag: true,
                 updateFlag: false,
                 selectFlag: true,
             });
+            showProjectResult(result);
         } else {
-            editor.actionManager.execute('projectObject2D', {
+            const result = await editor.actionManager.execute('projectObject2D', {
                 createFlag: true,
                 updateFlag: false,
             });
+            showProjectResult(result);
         }
     }
 
-    function reProject() {
+    async function reProject() {
         let selection = editor.pc.selection;
         let object3D = selection.filter((e) => e instanceof Box);
         if (object3D.length === 0) {
@@ -103,11 +115,41 @@ export default function useTool() {
             return;
         }
 
-        editor.actionManager.execute('projectObject2D', {
+        const result = await editor.actionManager.execute('projectObject2D', {
             createFlag: true,
             updateFlag: true,
             selectFlag: true,
         });
+        showProjectResult(result);
+    }
+
+    function showProjectResult(result?: IProjectResult) {
+        if (!result) return;
+
+        const addN = result.addN || 0;
+        const updateN = result.updateN || 0;
+        const deleteN = result.deleteN || 0;
+        const changedN = addN + updateN + deleteN;
+
+        if (changedN > 0) {
+            editor.showMsg(
+                'success',
+                `Projection updated: added ${addN}, updated ${updateN}, removed ${deleteN}`,
+            );
+            return;
+        }
+
+        if (result.reason === 'projectionDisabled') {
+            editor.showMsg('warning', 'Projection config is disabled');
+        } else if (result.reason === 'noImageView') {
+            editor.showMsg('warning', 'No image view loaded for projection');
+        } else if ((result.sourceN || 0) === 0) {
+            editor.showMsg('warning', 'No 3D box to project');
+        } else if ((result.inImageN || 0) === 0) {
+            editor.showMsg('warning', 'Selected 3D box is outside all image views');
+        } else {
+            editor.showMsg('success', 'Projection is already up to date');
+        }
     }
 
     async function runModel() {

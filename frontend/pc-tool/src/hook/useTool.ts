@@ -48,7 +48,18 @@ export default function useTool() {
             bsState.seriesFrameId = seriesFrameId;
             let dataId = bsState.query.dataId;
             if (dataId) {
-                dataInfos = dataInfos.filter((data) => data.id === dataId);
+                if (dataId === seriesFrameId && dataInfos[0]) {
+                    dataId = dataInfos[0].id;
+                    bsState.query.dataId = dataId;
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('dataId', dataId);
+                    window.history.replaceState(null, '', url.toString());
+                } else {
+                    const selectedIndex = dataInfos.findIndex((data) => data.id === dataId);
+                    if (selectedIndex > 0) {
+                        dataInfos = dataInfos.slice(selectedIndex).concat(dataInfos.slice(0, selectedIndex));
+                    }
+                }
             }
             if (dataInfos.length === 0) {
                 throw '';

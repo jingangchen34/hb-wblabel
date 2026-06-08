@@ -49,7 +49,7 @@
               @click="
                 (e) => {
                   e.stopPropagation();
-                  emits('handleAnotateFrame', data.id);
+                  emits('handleAnotateFrame', data.id, data.firstDataId);
                 }
               "
             >

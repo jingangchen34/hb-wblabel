@@ -149,7 +149,7 @@ export async function getInfoByRecordId(recordId: string) {
     data = data.data;
     // no data
     if (!data || !data.datas || data.datas.length === 0)
-        return { dataInfos: [], isSeriesFrame: false, seriesFrameId: '' };
+        return getInfoByDataId(recordId);
 
     let isSeriesFrame = ['FRAME_SERIES', 'SCENE'].includes(data.itemType);
     let modelRecordId = data.serialNo || '';
@@ -195,6 +195,45 @@ export async function getInfoByRecordId(recordId: string) {
     });
 
     return { dataInfos, isSeriesFrame, seriesFrameId };
+}
+
+async function getInfoByDataId(dataId: string) {
+    const dataResp = await get(`/api/data/listByIds`, { dataIds: dataId });
+    const data = (dataResp.data || [])[0];
+    if (!data) return { dataInfos: [], isSeriesFrame: false, seriesFrameId: '' };
+
+    const datasetId = data.datasetId + '';
+    const sceneId = data.parentId && data.parentId !== 0 ? data.parentId + '' : '';
+    let dataInfos = [] as IFrame[];
+    let isSeriesFrame = false;
+
+    if (sceneId) {
+        isSeriesFrame = true;
+        dataInfos = await getFrameSeriesData(datasetId, sceneId);
+        const currentIndex = dataInfos.findIndex((frame) => frame.id === dataId);
+        if (currentIndex > 0) {
+            dataInfos = dataInfos.slice(currentIndex).concat(dataInfos.slice(0, currentIndex));
+        }
+    } else {
+        dataInfos = [buildFrameInfo(dataId, datasetId)];
+    }
+
+    return { dataInfos, isSeriesFrame, seriesFrameId: sceneId };
+}
+
+function buildFrameInfo(dataId: string, datasetId: string): IFrame {
+    return {
+        id: dataId,
+        datasetId,
+        pointsUrl: '',
+        queryTime: '',
+        loadState: '',
+        needSave: false,
+        classifications: [],
+        dataStatus: 'VALID',
+        annotationStatus: 'NOT_ANNOTATED',
+        skipped: false,
+    };
 }
 
 export async function saveDataClassification(config: any) {
@@ -309,18 +348,7 @@ export async function getFrameSeriesData(datasetId: string, frameSeriesId: strin
 
     const dataList = [] as IFrame[];
     list.forEach((e: any) => {
-        dataList.push({
-            id: e,
-            datasetId: datasetId,
-            pointsUrl: '',
-            queryTime: '',
-            loadState: '',
-            needSave: false,
-            classifications: [],
-            dataStatus: 'VALID',
-            annotationStatus: 'NOT_ANNOTATED',
-            skipped: false,
-        });
+        dataList.push(buildFrameInfo(e, datasetId));
     });
     return dataList;
     // return configs;

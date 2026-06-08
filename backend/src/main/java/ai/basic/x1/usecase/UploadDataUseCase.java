@@ -47,8 +47,11 @@ import java.math.BigDecimal;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -151,6 +154,12 @@ public class UploadDataUseCase {
     private static final Integer PC_RENDER_IMAGE_HEIGHT = 2000;
 
     private static final Integer RETRY_COUNT = 3;
+
+    private static final Integer OCC_BIN_POINT_DIM = 7;
+    private static final Integer FLOAT_BYTES = 4;
+    private static final Integer XYZL_HEADER_BYTES = 16;
+    private static final Integer XYZL_MAGIC = 0x4c5a5958; // "XYZL" in little-endian bytes
+    private static final Integer XYZL_VERSION_WITH_RGB = 2;
 
 
     /**
@@ -637,8 +646,120 @@ public class UploadDataUseCase {
                 .filter(f -> isSameOccClipFrame(f, dataName))
                 .forEach(singleDataFile::add);
 
+        var pointCache = createOccPointCacheFile(sceneFile, dataName, lidarBins, frameIndex);
+        if (ObjectUtil.isNotNull(pointCache)) {
+            singleDataFile.add(pointCache);
+        }
+
         addOccClipCameraByIndex(sceneFile, frameIndex, singleDataFile);
         return singleDataFile.stream().distinct().collect(Collectors.toList());
+    }
+
+    private File createOccPointCacheFile(File sceneFile, String dataName, List<File> lidarBins, int frameIndex) {
+        if (frameIndex < 0 || frameIndex >= lidarBins.size()) {
+            return null;
+        }
+        var binFile = lidarBins.get(frameIndex);
+        var labelFile = FileUtil.loopFiles(sceneFile, 5, f -> LABEL_SUFFIX.equalsIgnoreCase(FileUtil.getSuffix(f)))
+                .stream()
+                .filter(f -> dataName.equals(getFilename(f)))
+                .findFirst()
+                .orElse(null);
+        if (ObjectUtil.isNull(labelFile)) {
+            return null;
+        }
+
+        try {
+            var cacheDir = FileUtil.file(sceneFile, "lidar_point_cloud_cache");
+            FileUtil.mkdir(cacheDir);
+            var cacheFile = FileUtil.file(cacheDir, dataName + ".xyzl");
+            if (isCurrentOccPointCache(cacheFile)) {
+                return cacheFile;
+            }
+
+            var binBytes = Files.readAllBytes(binFile.toPath());
+            var labelBytes = Files.readAllBytes(labelFile.toPath());
+            var bytesPerPoint = OCC_BIN_POINT_DIM * FLOAT_BYTES;
+            if (binBytes.length % bytesPerPoint != 0) {
+                log.warn("Skip xyzl cache, invalid bin length, file:{}", binFile.getAbsolutePath());
+                return null;
+            }
+            var pointCount = binBytes.length / bytesPerPoint;
+            if (labelBytes.length != pointCount) {
+                log.warn("Skip xyzl cache, label count {} != point count {}, label:{}", labelBytes.length, pointCount, labelFile.getAbsolutePath());
+                return null;
+            }
+
+            var output = ByteBuffer.allocate(XYZL_HEADER_BYTES + pointCount * 3 * FLOAT_BYTES + pointCount + pointCount * 3)
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            output.putInt(XYZL_MAGIC);
+            output.putInt(XYZL_VERSION_WITH_RGB);
+            output.putInt(pointCount);
+            output.putInt(0);
+
+            var source = ByteBuffer.wrap(binBytes).order(ByteOrder.LITTLE_ENDIAN);
+            for (int i = 0; i < pointCount; i++) {
+                var sourceOffset = i * bytesPerPoint;
+                output.putFloat(source.getFloat(sourceOffset));
+                output.putFloat(source.getFloat(sourceOffset + FLOAT_BYTES));
+                output.putFloat(source.getFloat(sourceOffset + FLOAT_BYTES * 2));
+            }
+            output.put(labelBytes);
+            for (byte labelByte : labelBytes) {
+                putOccLabelRgb(output, Byte.toUnsignedInt(labelByte));
+            }
+            Files.write(cacheFile.toPath(), output.array());
+            return cacheFile;
+        } catch (Exception e) {
+            log.warn("Create xyzl point cache failed, scene:{}, frame:{}", sceneFile.getAbsolutePath(), dataName, e);
+            return null;
+        }
+    }
+
+    private boolean isCurrentOccPointCache(File cacheFile) {
+        if (!cacheFile.exists() || cacheFile.length() <= 0) {
+            return false;
+        }
+        try {
+            var headerBytes = Files.readAllBytes(cacheFile.toPath());
+            if (headerBytes.length < XYZL_HEADER_BYTES) {
+                return false;
+            }
+            var header = ByteBuffer.wrap(headerBytes).order(ByteOrder.LITTLE_ENDIAN);
+            var magic = header.getInt();
+            var version = header.getInt();
+            var pointCount = header.getInt();
+            var expectedLength = XYZL_HEADER_BYTES + pointCount * 3L * FLOAT_BYTES + pointCount + pointCount * 3L;
+            return magic == XYZL_MAGIC && version == XYZL_VERSION_WITH_RGB && cacheFile.length() == expectedLength;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void putOccLabelRgb(ByteBuffer output, int label) {
+        switch (label) {
+            case 1:
+                output.put((byte) 0x80).put((byte) 0x80).put((byte) 0x80);
+                break;
+            case 2:
+                output.put((byte) 0x00).put((byte) 0xff).put((byte) 0x00);
+                break;
+            case 3:
+                output.put((byte) 0x00).put((byte) 0x00).put((byte) 0xff);
+                break;
+            case 4:
+                output.put((byte) 0xff).put((byte) 0xff).put((byte) 0x00);
+                break;
+            case 5:
+                output.put((byte) 0x00).put((byte) 0xff).put((byte) 0xff);
+                break;
+            case 6:
+                output.put((byte) 0xff).put((byte) 0x00).put((byte) 0x00);
+                break;
+            default:
+                output.put((byte) 0xff).put((byte) 0xff).put((byte) 0xff);
+                break;
+        }
     }
 
     private List<File> getOccClipLidarBins(File sceneFile) {
@@ -723,6 +844,7 @@ public class UploadDataUseCase {
             boo = Constants.IMAGE_DATA_TYPE.contains(mimeType) || Constants.PCD_SUFFIX.equalsIgnoreCase(FileUtil.getSuffix(filename)) ||
                     Constants.BIN_SUFFIX.equalsIgnoreCase(FileUtil.getSuffix(filename)) ||
                     Constants.LABEL_SUFFIX.equalsIgnoreCase(FileUtil.getSuffix(filename)) ||
+                    Constants.XYZL_SUFFIX.equalsIgnoreCase(FileUtil.getSuffix(filename)) ||
                     Constants.NPZ_SUFFIX.equalsIgnoreCase(FileUtil.getSuffix(filename)) ||
                     file.getAbsolutePath().toUpperCase().endsWith(Constants.JSON_SUFFIX);
         }
@@ -735,11 +857,11 @@ public class UploadDataUseCase {
     @Transactional(rollbackFor = Exception.class)
     public Long saveScene(File file, DataInfoUploadBO uploadDataBO) {
         var fileName = FileUtil.getName(file);
-        if (fileName.toLowerCase().startsWith(Constants.SCENE)) {
+        if (fileName.toLowerCase().startsWith(Constants.SCENE) || isOccClipLayout(file)) {
             var datasetId = uploadDataBO.getDatasetId();
             var userId = uploadDataBO.getUserId();
             var dataInfo = DataInfo.builder().datasetId(datasetId).name(fileName).orderName(NaturalSortUtil.convert(fileName)).parentId(Constants.DEFAULT_PARENT_ID)
-                    .type(ItemTypeEnum.SCENE).createdBy(userId).createdAt(OffsetDateTime.now()).parentId(null).build();
+                    .type(ItemTypeEnum.SCENE).createdBy(userId).createdAt(OffsetDateTime.now()).build();
             dataInfoDAO.save(dataInfo);
             return dataInfo.getId();
         }
@@ -805,17 +927,23 @@ public class UploadDataUseCase {
         if (ObjectUtil.isNull(obstacleFile)) {
             return;
         }
+        handleOccClipObstacle3dResult(obstacleFile, dataName, dataAnnotationObjectBO, dataAnnotationObjectBOList, new ArrayList<>());
+    }
+
+    private void handleOccClipObstacle3dResult(File obstacleFile, String dataName, DataAnnotationObjectBO dataAnnotationObjectBO,
+                                               List<DataAnnotationObjectBO> dataAnnotationObjectBOList, List<String> createdClasses) {
         try {
             var root = JSONUtil.readJSON(obstacleFile, StandardCharsets.UTF_8);
             var objects = findObstacleObjects(root, dataName);
             if (CollUtil.isEmpty(objects)) {
                 return;
             }
-            var classMap = datasetClassUseCase.findAll(dataAnnotationObjectBO.getDatasetId()).stream()
-                    .collect(Collectors.toMap(c -> normalizeClassName(c.getName()), c -> c, (a, b) -> a));
+            var classMap = new HashMap<>(datasetClassUseCase.findAll(dataAnnotationObjectBO.getDatasetId()).stream()
+                    .filter(c -> ToolTypeEnum.CUBOID.equals(c.getToolType()))
+                    .collect(Collectors.toMap(c -> normalizeClassName(c.getName()), c -> c, (a, b) -> a)));
             var frameToken = extractFrameToken(dataName);
             var index = new AtomicInteger(1);
-            objects.forEach(object -> buildObstacleAnnotation(object, dataAnnotationObjectBO, classMap, dataName, frameToken, index.getAndIncrement())
+            objects.forEach(object -> buildObstacleAnnotation(object, dataAnnotationObjectBO, classMap, createdClasses, dataName, frameToken, index.getAndIncrement())
                     .ifPresent(dataAnnotationObjectBOList::add));
         } catch (Exception e) {
             log.error("Handle obstacle_3d.json error,dataName:{},file:{}", dataName, obstacleFile.getAbsolutePath(), e);
@@ -828,6 +956,101 @@ public class UploadDataUseCase {
             return defaultFile;
         }
         return FileUtil.loopFiles(sceneFile, 4, f -> "obstacle_3d.json".equalsIgnoreCase(f.getName()))
+                .stream().findFirst().orElse(null);
+    }
+
+    @Transactional(rollbackFor = Throwable.class)
+    public OccGtReparseResultBO reparseOccClipGt(Long sceneId, String obstacleFilePath, Long userId) {
+        var scene = dataInfoDAO.getById(sceneId);
+        if (ObjectUtil.isNull(scene)) {
+            throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
+        }
+        if (!ItemTypeEnum.SCENE.equals(scene.getType()) && ObjectUtil.isNotNull(scene.getParentId())) {
+            scene = dataInfoDAO.getById(scene.getParentId());
+        }
+        if (ObjectUtil.isNull(scene) || !ItemTypeEnum.SCENE.equals(scene.getType())) {
+            throw new UsecaseException(UsecaseCode.UNKNOWN, "sceneId must point to a clip scene");
+        }
+
+        var obstacleFile = resolveObstacleFileForReparse(scene, obstacleFilePath);
+        if (ObjectUtil.isNull(obstacleFile) || !obstacleFile.exists()) {
+            return OccGtReparseResultBO.builder()
+                    .sceneId(scene.getId())
+                    .datasetId(scene.getDatasetId())
+                    .obstacleFileFound(false)
+                    .frameCount(0)
+                    .importedObjectCount(0)
+                    .deletedImportedObjectCount(0)
+                    .createdClasses(List.of())
+                    .build();
+        }
+
+        var frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, scene.getId())
+                .eq(DataInfo::getType, ItemTypeEnum.SINGLE_DATA)
+                .eq(DataInfo::getIsDeleted, false));
+        if (CollUtil.isEmpty(frames)) {
+            return OccGtReparseResultBO.builder()
+                    .sceneId(scene.getId())
+                    .datasetId(scene.getDatasetId())
+                    .obstacleFile(obstacleFile.getAbsolutePath())
+                    .obstacleFileFound(true)
+                    .frameCount(0)
+                    .importedObjectCount(0)
+                    .deletedImportedObjectCount(0)
+                    .createdClasses(List.of())
+                    .build();
+        }
+
+        var dataIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
+        var deleteWrapper = Wrappers.lambdaQuery(DataAnnotationObject.class)
+                .in(DataAnnotationObject::getDataId, dataIds)
+                .eq(DataAnnotationObject::getDatasetId, scene.getDatasetId())
+                .eq(DataAnnotationObject::getSourceId, -1L)
+                .eq(DataAnnotationObject::getSourceType, DataAnnotationObjectSourceTypeEnum.IMPORTED);
+        var deletedCount = Math.toIntExact(dataAnnotationObjectDAO.count(deleteWrapper));
+        dataAnnotationObjectDAO.remove(deleteWrapper);
+
+        var objects = new ArrayList<DataAnnotationObjectBO>();
+        var createdClasses = new ArrayList<String>();
+        var datasetId = scene.getDatasetId();
+        frames.forEach(frame -> {
+            var base = DataAnnotationObjectBO.builder()
+                    .datasetId(datasetId)
+                    .dataId(frame.getId())
+                    .createdBy(userId)
+                    .build();
+            handleOccClipObstacle3dResult(obstacleFile, frame.getName(), base, objects, createdClasses);
+        });
+
+        if (CollUtil.isNotEmpty(objects)) {
+            dataAnnotationObjectDAO.getBaseMapper().insertBatch(DefaultConverter.convert(objects, DataAnnotationObject.class));
+        }
+
+        return OccGtReparseResultBO.builder()
+                .sceneId(scene.getId())
+                .datasetId(scene.getDatasetId())
+                .obstacleFile(obstacleFile.getAbsolutePath())
+                .obstacleFileFound(true)
+                .frameCount(frames.size())
+                .importedObjectCount(objects.size())
+                .deletedImportedObjectCount(deletedCount)
+                .createdClasses(createdClasses)
+                .build();
+    }
+
+    private File resolveObstacleFileForReparse(DataInfo scene, String obstacleFilePath) {
+        if (StrUtil.isNotBlank(obstacleFilePath)) {
+            var file = FileUtil.file(obstacleFilePath);
+            if (file.exists() && file.isFile()) {
+                return file;
+            }
+        }
+        if (!FileUtil.exist(tempPath)) {
+            return null;
+        }
+        return FileUtil.loopFiles(FileUtil.file(tempPath), 8, f -> "obstacle_3d.json".equalsIgnoreCase(f.getName())
+                        && f.getAbsolutePath().contains(scene.getName()))
                 .stream().findFirst().orElse(null);
     }
 
@@ -915,7 +1138,7 @@ public class UploadDataUseCase {
     }
 
     private Optional<DataAnnotationObjectBO> buildObstacleAnnotation(JSONObject object, DataAnnotationObjectBO base,
-                                                                     Map<String, DatasetClassBO> classMap, String dataName,
+                                                                     Map<String, DatasetClassBO> classMap, List<String> createdClasses, String dataName,
                                                                      String frameToken, int index) {
         var center = readPoint(object, List.of("center3D", "center", "position", "translation", "location"), List.of("x", "y", "z", "cx", "cy", "cz"));
         var size = readPoint(object, List.of("size3D", "size", "dimension", "dimensions", "extent"), List.of("length", "width", "height", "l", "w", "h", "dx", "dy", "dz"));
@@ -934,14 +1157,15 @@ public class UploadDataUseCase {
         if (ObjectUtil.isNull(classBO) && StrUtil.isNotBlank(className)) {
             classBO = classMap.get(normalizeClassName(className));
         }
-        if (ObjectUtil.isNull(classBO) && classMap.size() == 1) {
-            classBO = classMap.values().iterator().next();
+        if (ObjectUtil.isNull(classBO)) {
+            var fallbackName = StrUtil.blankToDefault(className, "object");
+            classBO = ensureOccCuboidClass(base.getDatasetId(), fallbackName, base.getCreatedBy(), classMap, createdClasses);
         }
         if (ObjectUtil.isNull(classBO)) {
             return Optional.empty();
         }
 
-        var trackId = firstString(object, "trackId", "track_id", "id", "uuid", "objectId", "object_id");
+        var trackId = firstString(object, "TrackID", "trackID", "trackId", "trackingId", "track_id", "tracking_id", "id", "uuid", "objectId", "object_id");
         if (StrUtil.isBlank(trackId)) {
             trackId = String.format("%s-%s", StrUtil.blankToDefault(frameToken, dataName), index);
         }
@@ -959,6 +1183,7 @@ public class UploadDataUseCase {
         attrs.set("id", IdUtil.fastSimpleUUID());
         attrs.set("type", ObjectTypeEnum.THREE_D_BOX.getValue());
         attrs.set("version", 0);
+        attrs.set("trackID", trackId);
         attrs.set("trackId", trackId);
         attrs.set("trackName", trackName);
         attrs.set("classId", classBO.getId());
@@ -972,6 +1197,45 @@ public class UploadDataUseCase {
         insert.setSourceId(-1L);
         insert.setSourceType(DataAnnotationObjectSourceTypeEnum.IMPORTED);
         return Optional.of(insert);
+    }
+
+    private DatasetClassBO ensureOccCuboidClass(Long datasetId, String className, Long userId,
+                                                Map<String, DatasetClassBO> classMap, List<String> createdClasses) {
+        var normalized = normalizeClassName(className);
+        var exists = classMap.get(normalized);
+        if (ObjectUtil.isNotNull(exists)) {
+            return exists;
+        }
+        var colors = List.of("#FF7A00", "#00D084", "#2F80ED", "#EB5757", "#9B51E0", "#00B8D9", "#F2C94C", "#27AE60");
+        var classBO = DatasetClassBO.builder()
+                .datasetId(datasetId)
+                .name(StrUtil.blankToDefault(className, "object"))
+                .toolType(ToolTypeEnum.CUBOID)
+                .color(colors.get(Math.abs(normalized.hashCode()) % colors.size()))
+                .toolTypeOptions(new JSONObject())
+                .attributes(new JSONArray())
+                .build();
+        try {
+            datasetClassUseCase.saveDatasetClass(classBO);
+        } catch (DuplicateKeyException ignored) {
+            // Created by a parallel upload/reparse path; reload below.
+        } catch (UsecaseException e) {
+            if (!Objects.equals(e.getCode(), UsecaseCode.NAME_DUPLICATED)) {
+                throw e;
+            }
+        }
+        var saved = datasetClassUseCase.findAll(datasetId).stream()
+                .filter(c -> ToolTypeEnum.CUBOID.equals(c.getToolType()))
+                .filter(c -> normalized.equals(normalizeClassName(c.getName())))
+                .findFirst()
+                .orElse(null);
+        if (ObjectUtil.isNotNull(saved)) {
+            classMap.put(normalized, saved);
+            if (ObjectUtil.isNotNull(createdClasses) && !createdClasses.contains(saved.getName())) {
+                createdClasses.add(saved.getName());
+            }
+        }
+        return saved;
     }
 
     private JSONObject pointJson(double x, double y, double z) {
@@ -1215,6 +1479,9 @@ public class UploadDataUseCase {
         if (NPZ_SUFFIX.equalsIgnoreCase(suffix)) {
             return "occ_npz_0";
         }
+        if (XYZL_SUFFIX.equalsIgnoreCase(suffix)) {
+            return "lidar_point_cloud_cache_0";
+        }
         if (IMAGE_DATA_TYPE.contains(FileUtil.getMimeType(dataFile.getAbsolutePath()))) {
             return "camera_image_" + Math.abs(dataFile.getParentFile().getName().hashCode());
         }
@@ -1309,6 +1576,9 @@ public class UploadDataUseCase {
             var path = String.format("%s%s", rootPath, FileUtil.getAbsolutePath(file.getAbsolutePath()).replace(FileUtil.getAbsolutePath(FileUtil.file(tempPath).getAbsolutePath()), ""));
             zipPath = zipPath.startsWith(dataInfoUploadBO.getFileName()) ? zipPath : String.format("%s/%s", dataInfoUploadBO.getFileName(), zipPath);
             var mimeType = FileUtil.getMimeType(path);
+            if (XYZL_SUFFIX.equalsIgnoreCase(FileUtil.getSuffix(file))) {
+                mimeType = "application/octet-stream";
+            }
             var fileBO = FileBO.builder().name(file.getName()).originalName(file.getName()).bucketName(bucketName)
                     .size(file.length()).path(path).zipPath(zipPath).type(mimeType).build();
             if (Constants.IMAGE_DATA_TYPE.contains(mimeType)) {

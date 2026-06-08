@@ -242,7 +242,17 @@ export const projectObject2D = define({
         let config = editor.state.config;
         let addObjects: AnnotateObject[] = [];
         let deleteObjects: AnnotateObject[] = [];
-        if (!config.projectPoint4 && !config.projectPoint8) return;
+        if (!config.projectPoint4 && !config.projectPoint8) {
+            return {
+                addN: 0,
+                updateN: 0,
+                deleteN: 0,
+                viewN: 0,
+                sourceN: 0,
+                inImageN: 0,
+                reason: 'projectionDisabled',
+            };
+        }
 
         let annotate3D = editor.pc.getAnnotate3D();
         let annotate2D = editor.pc.getAnnotate2D();
@@ -253,6 +263,18 @@ export const projectObject2D = define({
         // 映射选中的Box
         if (selectFlag && selection.length === 1 && selection[0] instanceof Box) {
             annotate3D = [selection[0]];
+        }
+
+        if (views.length === 0) {
+            return {
+                addN: 0,
+                updateN: 0,
+                deleteN: 0,
+                viewN: 0,
+                sourceN: annotate3D.length,
+                inImageN: 0,
+                reason: 'noImageView',
+            };
         }
 
         let existMapRect = {} as Record<string, Record<string, Rect>>;
@@ -284,6 +306,7 @@ export const projectObject2D = define({
         });
 
         let updateN = 0;
+        let inImageN = 0;
         annotate3D.forEach((object) => {
             let userData = object.userData as IUserData;
             // let objectId = userData.id as string;
@@ -293,6 +316,7 @@ export const projectObject2D = define({
 
                 // isBoxInImage
                 if (utils.isBoxInImage(object, view)) {
+                    inImageN++;
                     if (config.projectPoint8) {
                         if (existMapBox2D[viewId][trackId]) {
                             if (updateFlag) {
@@ -338,6 +362,19 @@ export const projectObject2D = define({
                 if (addObjects.length > 0) editor.cmdManager.execute('add-object', addObjects);
             });
         }
+        if (updateN > 0) {
+            editor.getCurrentFrame().needSave = true;
+        }
+
+        return {
+            addN: addObjects.length,
+            updateN,
+            deleteN: deleteObjects.length,
+            viewN: views.length,
+            sourceN: annotate3D.length,
+            inImageN,
+            reason: inImageN > 0 ? '' : 'boxOutsideImages',
+        };
 
         function updateProjectRect(view: Image2DRenderView, object: Box, target: Rect) {
             let info1 = view.getBoxRect(object);

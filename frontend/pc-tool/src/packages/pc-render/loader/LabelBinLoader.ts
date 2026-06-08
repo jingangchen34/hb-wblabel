@@ -7,12 +7,13 @@ export interface LabelBinData {
     intensity: Float32Array;
     color: Uint8Array;
     pointLabels: Uint8Array;
-    pointFields: Float32Array;
+    pointFields?: Float32Array;
 }
 
 export interface LabelBinOptions {
     pointDim?: number;
     labelUrl?: string;
+    pointCache?: boolean;
     colorMap?: Record<number, string>;
 }
 
@@ -34,15 +35,26 @@ function hexToRgb(hex: string): [number, number, number] {
     return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
 
-function colorize(labels: Uint8Array, colorMap: Record<number, string>) {
-    const color = new Uint8Array(labels.length * 3);
-    for (let index = 0; index < labels.length; index++) {
-        const rgb = hexToRgb(colorMap[labels[index]] || '#ffffff');
-        color[index * 3] = rgb[0];
-        color[index * 3 + 1] = rgb[1];
-        color[index * 3 + 2] = rgb[2];
-    }
-    return color;
+function buildRgbMap(colorMap: Record<number, string>) {
+    const rgbMap: Record<number, [number, number, number]> = {};
+    Object.keys(colorMap).forEach((label) => {
+        rgbMap[+label] = hexToRgb(colorMap[+label]);
+    });
+    return rgbMap;
+}
+
+function fillColor(
+    color: Uint8Array,
+    pointIndex: number,
+    label: number,
+    rgbMap: Record<number, [number, number, number]>,
+    fallback: [number, number, number],
+) {
+    const rgb = rgbMap[label] || fallback;
+    const offset = pointIndex * 3;
+    color[offset] = rgb[0];
+    color[offset + 1] = rgb[1];
+    color[offset + 2] = rgb[2];
 }
 
 export default class LabelBinLoader extends Loader {
@@ -53,6 +65,9 @@ export default class LabelBinLoader extends Loader {
         onError?: Callback,
         options: LabelBinOptions = {},
     ) {
+        const labelPromise = options.labelUrl
+            ? this.loadLabel(options.labelUrl)
+            : Promise.resolve(new ArrayBuffer(0));
         const loader = new FileLoader(this.manager);
         loader.setPath(this.path);
         loader.setResponseType('arraybuffer');
@@ -62,10 +77,10 @@ export default class LabelBinLoader extends Loader {
             url,
             async (binData) => {
                 try {
-                    const labelData = options.labelUrl
-                        ? await this.loadLabel(options.labelUrl)
-                        : new ArrayBuffer(0);
-                    onLoad(this.parse(binData as ArrayBuffer, labelData, options));
+                    const labelData = await labelPromise;
+                    onLoad(options.pointCache
+                        ? this.parsePointCache(binData as ArrayBuffer, options)
+                        : this.parse(binData as ArrayBuffer, labelData, options));
                 } catch (error) {
                     if (onError) onError(error);
                     this.manager.itemError(url);
@@ -91,22 +106,72 @@ export default class LabelBinLoader extends Loader {
 
         const source = new Float32Array(binData);
         const position = new Float32Array(pointCount * 3);
-        const intensity = new Float32Array(pointCount);
+        const color = new Uint8Array(pointCount * 3);
+        const pointLabels = labels.length > 0 ? labels : new Uint8Array(pointCount);
+        const mergedColorMap = { ...DEFAULT_LABEL_COLORS, ...(options.colorMap || {}) };
+        const rgbMap = buildRgbMap(mergedColorMap);
+        const fallback = hexToRgb('#ffffff');
         for (let index = 0; index < pointCount; index++) {
             const sourceOffset = index * pointDim;
             position[index * 3] = source[sourceOffset];
             position[index * 3 + 1] = source[sourceOffset + 1];
             position[index * 3 + 2] = source[sourceOffset + 2];
-            intensity[index] = source[sourceOffset + 3] || 0;
+            fillColor(color, index, pointLabels[index], rgbMap, fallback);
         }
 
-        const pointLabels = labels.length > 0 ? new Uint8Array(labels) : new Uint8Array(pointCount);
         return {
             position,
-            intensity,
-            color: colorize(pointLabels, { ...DEFAULT_LABEL_COLORS, ...(options.colorMap || {}) }),
+            intensity: new Float32Array(0),
+            color,
             pointLabels,
-            pointFields: source,
+        };
+    }
+
+    parsePointCache(cacheData: ArrayBuffer, options: LabelBinOptions = {}): LabelBinData {
+        const startedAt = performance.now();
+        const headerBytes = 16;
+        if (cacheData.byteLength < headerBytes) {
+            throw new Error(`Invalid .xyzl length ${cacheData.byteLength}`);
+        }
+        const header = new DataView(cacheData, 0, headerBytes);
+        const magic = header.getUint32(0, true);
+        const version = header.getUint32(4, true);
+        const pointCount = header.getUint32(8, true);
+        const labelOffset = headerBytes + pointCount * 12;
+        const colorOffset = labelOffset + pointCount;
+        const version1Length = colorOffset;
+        const version2Length = colorOffset + pointCount * 3;
+        const expectedLength = version === 2 ? version2Length : version1Length;
+        if (magic !== 0x4c5a5958 || ![1, 2].includes(version) || cacheData.byteLength !== expectedLength) {
+            throw new Error(`Invalid .xyzl header or length, version=${version}, length=${cacheData.byteLength}`);
+        }
+
+        const position = new Float32Array(cacheData, headerBytes, pointCount * 3);
+        const pointLabels = new Uint8Array(cacheData, labelOffset, pointCount);
+        let color: Uint8Array;
+        if (version === 2) {
+            color = new Uint8Array(cacheData, colorOffset, pointCount * 3);
+        } else {
+            color = new Uint8Array(pointCount * 3);
+            const mergedColorMap = { ...DEFAULT_LABEL_COLORS, ...(options.colorMap || {}) };
+            const rgbMap = buildRgbMap(mergedColorMap);
+            const fallback = hexToRgb('#ffffff');
+            for (let index = 0; index < pointCount; index++) {
+                fillColor(color, index, pointLabels[index], rgbMap, fallback);
+            }
+        }
+
+        console.log(
+            `[pc-perf] step=parsePointCache version=${version} points=${pointCount} ms=${Math.round(
+                performance.now() - startedAt,
+            )}`,
+        );
+
+        return {
+            position,
+            intensity: new Float32Array(0),
+            color,
+            pointLabels,
         };
     }
 

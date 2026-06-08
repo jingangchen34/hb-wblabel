@@ -20,6 +20,23 @@
         <div class="bar-center">
             <div style="width: 100%; text-align: center">
                 <a-tooltip v-if="canEdit()" placement="top">
+                    <template #title>Copy all boxes one frame backward</template>
+                    <a-button
+                        :disabled="disable"
+                        @click="() => onAction('CopyAllBackward')"
+                        style="width: 46px"
+                    >
+                        <template #icon>
+                            <div>
+                                <StepBackwardOutlined />
+                                <CopyOutlined style="margin-left: -4px; font-size: 14px" />
+                                <CopyOutlined style="margin-left: -6px; font-size: 12px" />
+                            </div>
+                        </template>
+                    </a-button>
+                </a-tooltip>
+
+                <a-tooltip v-if="canEdit()" placement="top">
                     <template #title>{{ editor.lang('copyLeft1') }}</template>
                     <a-button
                         :disabled="disable"
@@ -157,6 +174,23 @@
                         </template>
                     </a-button>
                 </a-tooltip>
+
+                <a-tooltip v-if="canEdit()" placement="top">
+                    <template #title>Copy all boxes one frame forward</template>
+                    <a-button
+                        :disabled="disable"
+                        @click="() => onAction('CopyAllForward')"
+                        style="width: 46px"
+                    >
+                        <template #icon>
+                            <div>
+                                <CopyOutlined style="margin-right: -6px; font-size: 12px" />
+                                <CopyOutlined style="margin-right: -4px; font-size: 14px" />
+                                <StepForwardOutlined />
+                            </div>
+                        </template>
+                    </a-button>
+                </a-tooltip>
             </div>
         </div>
         <div class="bar-right" v-show="!isCheck()" v-if="canEdit()">
@@ -223,6 +257,8 @@
 
     type IBarAction =
         | 'CopyForward'
+        | 'CopyAllForward'
+        | 'CopyAllBackward'
         | 'CopyBackward'
         | 'AutoLoad'
         | 'Replay'
@@ -242,23 +278,31 @@
     function onTrackAction(action: ITrackAction) {
         emit('onTrackAction', action);
     }
-    function onAutoLoadHandle() {
+    function onAutoLoadHandle(checked: boolean) {
         autoLoadSwitch.value?.blur();
-        onAction('AutoLoad');
+        onAction('AutoLoad', checked);
     }
-    function onAction(action: IBarAction) {
+    function onAction(action: IBarAction, value?: boolean) {
         const { frames } = editor.state;
         switch (action) {
             case 'AutoLoad':
-                editor.dataResource.setLoadMode(config.autoLoad ? 'near_2' : 'all');
+                editor.dataResource.setLoadMode(value ? 'all' : 'near_2');
                 editor.dataResource.load();
                 break;
             case 'CopyForward':
                 editor.dataManager.copyForward();
                 break;
 
+            case 'CopyAllForward':
+                editor.dataManager.copyAllForward();
+                break;
+
             case 'CopyBackward':
                 editor.dataManager.copyBackWard();
+                break;
+
+            case 'CopyAllBackward':
+                editor.dataManager.copyAllBackWard();
                 break;
             case 'Replay':
                 rePlay();

@@ -21,8 +21,13 @@ function hexToRgb(hex: string): [number, number, number] {
 export function buildPointLabelColors(labels: Uint8Array, colorMap: Record<number, string> = {}) {
     const mergedMap = { ...DEFAULT_POINT_LABEL_COLORS, ...colorMap };
     const colors = new Uint8Array(labels.length * 3);
+    const rgbMap: Record<number, [number, number, number]> = {};
+    Object.keys(mergedMap).forEach((label) => {
+        rgbMap[+label] = hexToRgb(mergedMap[+label]);
+    });
+    const fallback = hexToRgb('#ffffff');
     for (let index = 0; index < labels.length; index++) {
-        const rgb = hexToRgb(mergedMap[labels[index]] || '#ffffff');
+        const rgb = rgbMap[labels[index]] || fallback;
         colors[index * 3] = rgb[0];
         colors[index * 3 + 1] = rgb[1];
         colors[index * 3 + 2] = rgb[2];

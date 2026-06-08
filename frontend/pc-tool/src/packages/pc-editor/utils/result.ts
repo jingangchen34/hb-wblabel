@@ -74,6 +74,7 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         version: object.version,
         createdBy: object.createdBy,
         createdAt: object.createdAt,
+        trackID: object.trackID,
         trackId: object.trackId,
         backId: object.backId,
         frontId: object.id,
@@ -114,6 +115,10 @@ export function translateToObject(objectV2: IObjectV2): IObject {
         objType: objectV2.type || objectV2['objType'],
         attrs: arrayToObj(objectV2.classValues || []),
     } as IObject;
+    object.trackID = (objectV2 as any).TrackID ?? objectV2.trackID ?? objectV2.trackId;
+    if (!object.trackId && object.trackID !== undefined && object.trackID !== '') {
+        object.trackId = String(object.trackID);
+    }
     return object;
 }
 function arrayToObj(data: any[] = []) {
@@ -155,8 +160,11 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         // userData.refId = obj.refId;
         userData.isProjection = obj.isProjection || false;
         // userData.isStandard = obj.isStandard || false;
-        userData.trackId = obj.trackId || '';
-        userData.trackName = obj.trackName || '';
+        const rawTrackId =
+            (obj as any).TrackID ?? (obj as any).trackID ?? obj.trackId ?? (obj as any).trackingId ?? '';
+        userData.trackID = rawTrackId;
+        userData.trackId = rawTrackId !== '' && rawTrackId !== undefined ? String(rawTrackId) : '';
+        userData.trackName = obj.trackName || userData.trackId;
 
         userData.classType = classConfig?.name || '';
         userData.classId = obj.classId || '';
@@ -263,6 +271,8 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             // invisibleFlag: !!userData.invisibleFlag,
             isProjection: userData.isProjection || false,
             // isStandard: userData.isStandard || false,
+            TrackID: userData.trackID ?? userData.trackId ?? '',
+            trackID: userData.trackID ?? userData.trackId ?? '',
             trackId: userData.trackId || '',
             trackName: userData.trackName || '',
             // resultStatus: userData.resultStatus || '',

@@ -10,6 +10,9 @@
                         <span class="track-name" @click.stop="onTrackTool('select')">{{
                             data.name
                         }}</span>
+                        <span class="track-id" :title="`trackID: ${data.trackId || data.id}`">
+                            ID: {{ shortTrackId }}
+                        </span>
                         <i
                             class="iconfont icon-tixing invisible"
                             v-show="data.invisible"
@@ -66,6 +69,7 @@
 </template>
 
 <script setup lang="ts">
+    import { computed } from 'vue';
     import {
         EyeOutlined,
         EyeInvisibleOutlined,
@@ -103,6 +107,11 @@
     let { canEdit, canAnnotate } = useUI();
     let editor = useInjectEditor();
 
+    const shortTrackId = computed(() => {
+        const trackId = props.data.trackId || props.data.id || '';
+        return trackId.length > 8 ? trackId.slice(-8) : trackId;
+    });
+
     function onTrackClick(e: MouseEvent) {
         if (props.data.invisible && props.track !== props.data.id) {
             // e.stopPropagation();
@@ -136,6 +145,22 @@
             display: inline-block;
             padding: 0px 2px;
             // min-width: 100px;
+        }
+
+        .track-id {
+            display: inline-block;
+            max-width: 86px;
+            margin-left: 6px;
+            padding: 0 4px;
+            border: 1px solid #4b5568;
+            border-radius: 3px;
+            color: #9fb8df;
+            font-size: 11px;
+            line-height: 16px;
+            vertical-align: 1px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .track-title {

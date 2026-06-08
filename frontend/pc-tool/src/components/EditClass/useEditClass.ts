@@ -366,6 +366,49 @@ export default function useEditClass() {
         updateAttrInfo(trackObject.userData, state.classType);
     }
 
+    function onTrackIdChange(newTrackId: string) {
+        if (state.isBatch) return;
+        newTrackId = `${newTrackId || ''}`.trim();
+        const oldTrackId = state.trackId;
+        if (!newTrackId || !oldTrackId || newTrackId === oldTrackId) return;
+
+        const existingTrack = editor.trackManager.getTrackObject(newTrackId);
+        if (existingTrack) {
+            editor.showMsg('warning', `Track ID ${newTrackId} already exists`);
+            return;
+        }
+
+        const objects = editor.trackManager.getObjects(oldTrackId);
+        if (objects.length === 0) return;
+        const oldTrackData = editor.trackManager.getTrackObject(oldTrackId);
+        const newUserData = {
+            trackID: newTrackId,
+            trackId: newTrackId,
+            trackName: newTrackId,
+        } as IUserData;
+
+        editor.withEventSource(SOURCE_CLASS, () => {
+            editor.cmdManager.withGroup(() => {
+                editor.cmdManager.execute('update-object-user-data', {
+                    objects,
+                    data: newUserData,
+                });
+                editor.trackManager.removeTrackObject(oldTrackId);
+                editor.trackManager.addTrackObject(newTrackId, {
+                    ...(oldTrackData || {}),
+                    ...newUserData,
+                });
+            });
+        });
+
+        state.trackId = newTrackId;
+        state.trackName = newTrackId;
+        tempObjects = objects;
+        trackObject = objects[0];
+        editor.setCurrentTrack(newTrackId, newTrackId);
+        editor.pc.render();
+    }
+
     function updateClassMulti() {
         let { frameIndex, frames } = editor.state;
 
@@ -461,6 +504,7 @@ export default function useEditClass() {
         update,
         control,
         onAttChange,
+        onTrackIdChange,
         onClassChange,
         onInstanceRemove,
         onToggleObjectsVisible,

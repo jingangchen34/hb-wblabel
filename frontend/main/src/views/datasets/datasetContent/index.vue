@@ -88,6 +88,9 @@
                 <span class="text">{{ t('common.back') }}</span>
               </div>
               <div class="frame-name">{{ frameDetailName }}</div>
+              <Button class="ml-3" type="primary" @click="() => handleAnnotateCurrentFrameSeries()">
+                Annotate Clip
+              </Button>
             </div>
           </template>
         </Tools>
@@ -801,6 +804,11 @@
   };
 
   const handleSingleAnnotate = async (data) => {
+    if (type.value === PageTypeEnum.frame && parentIdScene.value) {
+      await handleAnnotateCurrentFrameSeries(data.id);
+      return;
+    }
+
     const dataId = data.id;
     const dataType = data.type;
     console.log(dataId, dataType);
@@ -816,6 +824,29 @@
     });
     getLockedData();
     goToTool({ recordId: res }, info.value?.type);
+    fixedFetchList();
+  };
+
+  const handleAnnotateCurrentFrameSeries = async (initialDataId?: string | number) => {
+    if (!parentIdScene.value) {
+      return;
+    }
+    const sceneId = String(parentIdScene.value);
+    const flag = await handleEmpty([sceneId], dataTypeEnum.FRAME_SERIES);
+    if (!flag) {
+      return;
+    }
+    const res = await takeRecordByData({
+      datasetId: id as unknown as number,
+      dataIds: [sceneId],
+      operateItemType: dataTypeEnum.FRAME_SERIES,
+    });
+    getLockedData();
+    const query: Record<string, any> = { recordId: res };
+    if (typeof initialDataId === 'string' || typeof initialDataId === 'number') {
+      query.dataId = initialDataId;
+    }
+    goToTool(query, info.value?.type);
     fixedFetchList();
   };
 
@@ -836,14 +867,14 @@
     return res;
   };
 
-  const handleAnotateFrame = async (dataId) => {
-    console.log('handleAnotateFrame ==>', dataId);
+  const handleAnotateFrame = async (sceneId, initialDataId) => {
+    console.log('handleAnotateFrame ==>', sceneId, initialDataId);
     const res = await takeRecordByData({
       datasetId: id as unknown as number,
-      dataIds: [dataId],
+      dataIds: [sceneId],
       operateItemType: dataTypeEnum.FRAME_SERIES,
     });
-    goToTool({ recordId: res }, info.value?.type);
+    goToTool({ recordId: res, dataId: initialDataId || sceneId }, info.value?.type);
     // window.location.reload();
   };
   // Open Frame

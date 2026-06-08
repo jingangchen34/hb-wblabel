@@ -160,20 +160,6 @@ export const createObjectWith3 = define({
                             userData.classType = classConfig.name;
                             userData.classId = classConfig.id;
                         }
-                        if (editor.currentTrack) {
-                            const object3d = editor.pc.getAnnotate3D().find((e) => {
-                                return (
-                                    e instanceof Box &&
-                                    !(e as any).isHolder &&
-                                    e.userData.trackId == editor.currentTrack
-                                );
-                            });
-                            if (!object3d) {
-                                userData.trackId = editor.currentTrack as string;
-                                userData.trackName = editor.currentTrackName;
-                            }
-                        }
-
                         let box = editor.createAnnotate3D(
                             transform.position,
                             transform.scale,
