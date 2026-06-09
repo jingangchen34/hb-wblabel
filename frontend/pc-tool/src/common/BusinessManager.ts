@@ -27,14 +27,16 @@ export default class BusinessManager extends BaseBusinessManager {
             );
         };
         const regLidar = new RegExp(/point(_?)cloud/i);
-        const regConfig = new RegExp(/camera(_?)config/i);
+        const regConfig = new RegExp(/camera(_?)config|calib/i);
         const dataFileStartedAt = performance.now();
         let { configs: fileConfig, name } = await api.getDataFile(data.id + '');
         logStep('getDataFile', dataFileStartedAt);
         if (fileConfig.filter((e) => regLidar.test(e.dirName)).length === 0) {
             throw this.editor.lang('no-point-data');
         }
-        let cameraConfig = fileConfig.find((e) => regConfig.test(e.dirName)) as IFileConfig;
+        let cameraConfig = fileConfig.find((e) =>
+            regConfig.test(e.dirName) || regConfig.test(e.name) || /\.json$/i.test(e.name),
+        ) as IFileConfig;
 
         // no camera config
         let cameraInfo = [];
@@ -51,7 +53,7 @@ export default class BusinessManager extends BaseBusinessManager {
             pointsUrl: info.pointsUrl,
             labelUrl: info.labelUrl,
             pointCacheUrl: info.pointCacheUrl,
-            binPointDim: 7,
+            binPointDim: [6, 7, 4],
             pointsData: {},
             viewConfig: info.config,
             time: 0,

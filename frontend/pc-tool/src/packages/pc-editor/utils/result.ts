@@ -357,16 +357,14 @@ export function get3DPoints8(object: Box) {
         positionsFront: THREE.Vector3[],
         positionsBack: THREE.Vector3[],
     ) {
-        // front
-        positionsFront[0].set(box.max.x, box.min.y, box.max.z);
-        positionsFront[1].set(box.max.x, box.min.y, box.min.z);
-        positionsFront[2].set(box.max.x, box.max.y, box.min.z);
-        positionsFront[3].set(box.max.x, box.max.y, box.max.z);
+        positionsFront[0].set(box.max.x, box.max.y, box.max.z);
+        positionsFront[1].set(box.min.x, box.max.y, box.max.z);
+        positionsFront[2].set(box.min.x, box.min.y, box.max.z);
+        positionsFront[3].set(box.max.x, box.min.y, box.max.z);
 
-        // back
-        positionsBack[0].set(box.min.x, box.min.y, box.max.z);
-        positionsBack[1].set(box.min.x, box.min.y, box.min.z);
-        positionsBack[2].set(box.min.x, box.max.y, box.min.z);
-        positionsBack[3].set(box.min.x, box.max.y, box.max.z);
+        positionsBack[0].set(box.max.x, box.max.y, box.min.z);
+        positionsBack[1].set(box.min.x, box.max.y, box.min.z);
+        positionsBack[2].set(box.min.x, box.min.y, box.min.z);
+        positionsBack[3].set(box.max.x, box.min.y, box.min.z);
     }
 }

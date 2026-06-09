@@ -9,9 +9,216 @@ export function isMatrixColumnMajor(elements: number[]) {
     return rightZero && bottomHasOne;
 }
 
+function flatNumberArray(value: any): number[] {
+    if (!Array.isArray(value)) return [];
+    return value.flat
+        ? value.flat(Infinity).map(Number)
+        : ([] as number[]).concat(...value).map(Number);
+}
+
+function numberValue(value: any) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function firstNumberValue(value: any, keys: string[]) {
+    if (!value || typeof value !== 'object') return null;
+    for (const key of keys) {
+        const n = numberValue(value[key]);
+        if (n !== null) return n;
+    }
+    return null;
+}
+
+function vector3Value(value: any) {
+    const array = flatNumberArray(value);
+    if (array.length >= 3) return array.slice(0, 3);
+    if (!value || typeof value !== 'object') return [];
+
+    const x = firstNumberValue(value, ['x', 'tx', '0']);
+    const y = firstNumberValue(value, ['y', 'ty', '1']);
+    const z = firstNumberValue(value, ['z', 'tz', '2']);
+    return x !== null && y !== null && z !== null ? [x, y, z] : [];
+}
+
+function quaternionWxyzValue(value: any) {
+    const array = flatNumberArray(value);
+    if (array.length >= 4) return array.slice(0, 4);
+    if (!value || typeof value !== 'object') return [];
+
+    const w = firstNumberValue(value, ['w', 'qw', '0']);
+    const x = firstNumberValue(value, ['x', 'qx', '1']);
+    const y = firstNumberValue(value, ['y', 'qy', '2']);
+    const z = firstNumberValue(value, ['z', 'qz', '3']);
+    return w !== null && x !== null && y !== null && z !== null ? [w, x, y, z] : [];
+}
+
+function matrixToRowMajor(matrix: THREE.Matrix4) {
+    const e = matrix.elements;
+    return [
+        e[0],
+        e[4],
+        e[8],
+        e[12],
+        e[1],
+        e[5],
+        e[9],
+        e[13],
+        e[2],
+        e[6],
+        e[10],
+        e[14],
+        e[3],
+        e[7],
+        e[11],
+        e[15],
+    ];
+}
+
+function toMatrix4(elements: number[]) {
+    return new THREE.Matrix4().set(...(elements as [
+        number, number, number, number,
+        number, number, number, number,
+        number, number, number, number,
+        number, number, number, number,
+    ]));
+}
+
+function normalizeCameraName(value: any) {
+    return `${value || ''}`.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function getCameraToken(value: any) {
+    const text = `${value || ''}`;
+    const match = text.match(/camera[_-][a-z0-9_]+?(?=_[0-9]{6,}|\.|$)/i);
+    return normalizeCameraName(match ? match[0] : text);
+}
+
+function getDistortionParameter(info: any) {
+    const cameraInternal = info?.cameraInternal || info?.camera_internal;
+    const distortion = flatNumberArray(
+        info?.distortion_parameter ||
+            info?.distortionParameter ||
+            info?.distortion_parameters ||
+            info?.distortion ||
+            info?.D ||
+            cameraInternal?.distortion_parameter ||
+            cameraInternal?.distortionParameter ||
+            cameraInternal?.distortion_parameters ||
+            cameraInternal?.distortion ||
+            cameraInternal?.D,
+    );
+
+    return distortion.length ? distortion.slice(0, 5) : undefined;
+}
+
+function getCameraInternal(info: any) {
+    const cameraInternal = info?.cameraInternal || info?.camera_internal;
+    const distortion = getDistortionParameter(info);
+    if (cameraInternal) return distortion && !cameraInternal.distortion
+        ? { ...cameraInternal, distortion }
+        : cameraInternal;
+
+    const intrinsic = flatNumberArray(
+        info?.intrinsic ||
+            info?.intrinsics ||
+            info?.cameraIntrinsic ||
+            info?.camera_intrinsic ||
+            info?.cameraMatrix ||
+            info?.camera_matrix ||
+            info?.cam_K ||
+            info?.camK ||
+            info?.K,
+    );
+    if (intrinsic.length >= 9) {
+        return {
+            fx: intrinsic[0],
+            fy: intrinsic[4],
+            cx: intrinsic[2],
+            cy: intrinsic[5],
+            distortion,
+        };
+    }
+
+    return null;
+}
+
+function matrixFromCameraToLidar(info: any) {
+    let cameraToLidar =
+        info?.cameraToLidar ||
+        info?.camera_to_lidar ||
+        info?.lidar2camera?.inverse ||
+        info?.extrinsic ||
+        info?.transform;
+    if (cameraToLidar) {
+        let elements = flatNumberArray(cameraToLidar);
+        if (elements.length === 16) {
+            if (info.rowMajor === false || isMatrixColumnMajor(elements)) {
+                let matrix = new THREE.Matrix4();
+                matrix.elements = elements;
+                matrix.transpose();
+                elements = matrix.elements;
+            }
+            return toMatrix4(elements);
+        }
+    }
+
+    const rotationValue =
+        info?.rotation ||
+        info?.quaternion ||
+        info?.quat ||
+        info?.rotation_quaternion ||
+        info?.rotation_matrix;
+    const rotation = flatNumberArray(rotationValue);
+    const translation = vector3Value(
+        info?.translation ||
+            info?.translation_vector ||
+            info?.t ||
+            info?.T,
+    );
+    if (translation.length !== 3) return null;
+
+    const quaternionWxyz = quaternionWxyzValue(rotationValue);
+    if (quaternionWxyz.length === 4) {
+        const [w, x, y, z] = quaternionWxyz;
+        const quaternion = new THREE.Quaternion(x, y, z, w).normalize();
+        return new THREE.Matrix4()
+            .makeRotationFromQuaternion(quaternion)
+            .setPosition(translation[0], translation[1], translation[2]);
+    }
+
+    if (rotation.length !== 9) return null;
+
+    return new THREE.Matrix4().set(
+        rotation[0],
+        rotation[1],
+        rotation[2],
+        translation[0],
+        rotation[3],
+        rotation[4],
+        rotation[5],
+        translation[1],
+        rotation[6],
+        rotation[7],
+        rotation[8],
+        translation[2],
+        0,
+        0,
+        0,
+        1,
+    );
+}
+
 export function translateCameraConfig(info: any) {
     let cameraExternal = info?.cameraExternal || info?.camera_external;
-    let cameraInternal = info?.cameraInternal || info?.camera_internal;
+    let cameraInternal = getCameraInternal(info);
+    let externalIsCameraToLidar = !!cameraExternal;
+
+    const cameraToLidarMatrix = matrixFromCameraToLidar(info);
+    if (cameraToLidarMatrix) {
+        cameraExternal = matrixToRowMajor(cameraToLidarMatrix.invert());
+        externalIsCameraToLidar = false;
+    }
 
     if (!info || !cameraExternal || cameraExternal.length !== 16) return null;
 
@@ -23,7 +230,52 @@ export function translateCameraConfig(info: any) {
         cameraExternal = matrix.elements;
     }
 
+    const direction =
+        info.externalDirection || info.external_direction || info.cameraExternalDirection;
+    if (externalIsCameraToLidar && direction !== 'lidar_to_camera') {
+        cameraExternal = matrixToRowMajor(
+            toMatrix4(cameraExternal).invert(),
+        );
+    }
+
     return { cameraExternal, cameraInternal };
+}
+
+function normalizeCameraInfo(cameraInfo: any) {
+    if (Array.isArray(cameraInfo)) return cameraInfo;
+    if (!cameraInfo || typeof cameraInfo !== 'object') return [];
+
+    if (getCameraInternal(cameraInfo) || cameraInfo.cameraExternal || cameraInfo.camera_external) {
+        return [cameraInfo];
+    }
+
+    return Object.keys(cameraInfo).map((key) => ({
+        ...cameraInfo[key],
+        __cameraKey: key,
+    }));
+}
+
+function findCameraInfo(cameraInfo: any[], index: number, config: IImgViewConfig, dirName?: string) {
+    const byIndex = cameraInfo[index];
+    const imageNames = [config.name, dirName].map(getCameraToken).filter(Boolean);
+    const byName = cameraInfo.find((info) => {
+        const names = [
+            info?.__cameraKey,
+            info?.frame_id,
+            info?.frameId,
+            info?.camera_name,
+            info?.cameraName,
+            info?.name,
+        ]
+            .map(getCameraToken)
+            .filter(Boolean);
+
+        return imageNames.some((imageName) =>
+            names.some((cameraName) => imageName.includes(cameraName) || cameraName.includes(imageName)),
+        );
+    });
+
+    return byName || byIndex;
 }
 
 export function clamRange(v: number, min: number, max: number) {
@@ -31,7 +283,9 @@ export function clamRange(v: number, min: number, max: number) {
 }
 
 export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
+    cameraInfo = normalizeCameraInfo(cameraInfo);
     let viewConfig = [] as IImgViewConfig[];
+    let viewDirNames = [] as string[];
     let pointsUrl = '';
     let labelUrl = '';
     let pointCacheUrl = '';
@@ -67,20 +321,28 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
                 name: e.name,
                 imgObject: null as any,
             };
-            if (index === viewConfig.length) viewConfig.push(imageConfig);
-            else viewConfig[index] = imageConfig;
+            if (index === viewConfig.length) {
+                viewConfig.push(imageConfig);
+                viewDirNames.push(e.dirName);
+            } else {
+                viewConfig[index] = imageConfig;
+                viewDirNames[index] = e.dirName;
+            }
         }
     });
     viewConfig = viewConfig.filter((e) => !!e);
     viewConfig.forEach((config, index) => {
-        let info = cameraInfo[index];
+        let info = findCameraInfo(cameraInfo, index, config, viewDirNames[index]);
 
         let translateInfo = translateCameraConfig(info);
         if (!translateInfo) return;
 
         config.cameraExternal = translateInfo.cameraExternal;
         config.cameraInternal = translateInfo.cameraInternal;
-        config.imgSize = [info.width, info.height];
+        config.imgSize = [info.width || info.image_width || config.imgSize[0], info.height || info.image_height || config.imgSize[1]];
+        if (!config.projectionType && /fish/i.test(info.camera_model || info.cameraModel || '')) {
+            config.projectionType = 'fisheye';
+        }
         // config.rowMajor = info.rowMajor;
     });
 

@@ -2,7 +2,7 @@ import { reactive, toRefs, watch } from 'vue';
 import { useInjectEditor } from '../../state';
 import { allItems } from './item';
 import { IActionName } from 'pc-editor';
-import { Image2DRenderView, CreateAction, Box } from 'pc-render';
+import { Box } from 'pc-render';
 import { IModelResult, IModel } from 'pc-editor';
 import * as api from '../../api';
 
@@ -60,10 +60,10 @@ export default function useTool() {
                 editor.actionManager.execute('toggleTranslate');
                 break;
             case 'reProjection':
-                reProject();
+                project2D();
                 break;
             case 'projection':
-                project();
+                project3D();
                 break;
             case 'track':
                 config.activeTrack = !config.activeTrack;
@@ -83,7 +83,15 @@ export default function useTool() {
         editor.pc.render();
     }
 
-    async function project() {
+    async function project3D() {
+        await toggleProjection('box2d', 'Project3D');
+    }
+
+    async function project2D() {
+        await toggleProjection('rect', 'Project2D');
+    }
+
+    async function toggleProjection(projectType: 'rect' | 'box2d', label: string) {
         let selection = editor.pc.selection;
 
         if (selection.length > 0) {
@@ -94,36 +102,24 @@ export default function useTool() {
             }
             const result = await editor.actionManager.execute('projectObject2D', {
                 createFlag: true,
-                updateFlag: false,
+                updateFlag: true,
                 selectFlag: true,
+                projectType,
+                toggleFlag: true,
             });
-            showProjectResult(result);
+            showProjectResult(result, label);
         } else {
             const result = await editor.actionManager.execute('projectObject2D', {
                 createFlag: true,
-                updateFlag: false,
+                updateFlag: true,
+                projectType,
+                toggleFlag: true,
             });
-            showProjectResult(result);
+            showProjectResult(result, label);
         }
     }
 
-    async function reProject() {
-        let selection = editor.pc.selection;
-        let object3D = selection.filter((e) => e instanceof Box);
-        if (object3D.length === 0) {
-            editor.showMsg('warning', 'Please Select a 3D Result');
-            return;
-        }
-
-        const result = await editor.actionManager.execute('projectObject2D', {
-            createFlag: true,
-            updateFlag: true,
-            selectFlag: true,
-        });
-        showProjectResult(result);
-    }
-
-    function showProjectResult(result?: IProjectResult) {
+    function showProjectResult(result?: IProjectResult, label = 'Projection') {
         if (!result) return;
 
         const addN = result.addN || 0;
@@ -131,10 +127,15 @@ export default function useTool() {
         const deleteN = result.deleteN || 0;
         const changedN = addN + updateN + deleteN;
 
+        if (result.reason === 'projectionRemoved') {
+            editor.showMsg('success', `${label} disabled`);
+            return;
+        }
+
         if (changedN > 0) {
             editor.showMsg(
                 'success',
-                `Projection updated: added ${addN}, updated ${updateN}, removed ${deleteN}`,
+                `${label} updated: added ${addN}, updated ${updateN}, removed ${deleteN}`,
             );
             return;
         }

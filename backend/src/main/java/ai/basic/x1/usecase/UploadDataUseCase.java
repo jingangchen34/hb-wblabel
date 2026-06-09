@@ -652,7 +652,15 @@ public class UploadDataUseCase {
         }
 
         addOccClipCameraByIndex(sceneFile, frameIndex, singleDataFile);
+        addOccClipCalib(sceneFile, singleDataFile);
         return singleDataFile.stream().distinct().collect(Collectors.toList());
+    }
+
+    private void addOccClipCalib(File sceneFile, List<File> singleDataFile) {
+        var calibFile = FileUtil.file(sceneFile, "calib.json");
+        if (calibFile.exists() && calibFile.isFile()) {
+            singleDataFile.add(calibFile);
+        }
     }
 
     private File createOccPointCacheFile(File sceneFile, String dataName, List<File> lidarBins, int frameIndex) {
@@ -1470,6 +1478,9 @@ public class UploadDataUseCase {
 
     private String getContentDirName(File dataFile) {
         var suffix = FileUtil.getSuffix(dataFile);
+        if ("calib.json".equalsIgnoreCase(dataFile.getName())) {
+            return CAMERA_CONFIG;
+        }
         if (BIN_SUFFIX.equalsIgnoreCase(suffix)) {
             return "lidar_point_cloud_0";
         }

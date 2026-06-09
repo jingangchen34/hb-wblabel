@@ -5,7 +5,10 @@ import PointsMaterial, { IUniformOption } from '../material/PointsMaterial';
 import * as _ from 'lodash';
 import { Object2D, Box, Rect, Vector2Of4, Box2D, AnnotateObject } from '../objects';
 import { IRenderViewConfig, ICameraInternal } from '../type';
-import { createMatrixFromCameraInternal, getMaxMinV2, reformProjectPoints } from '../utils';
+import {
+    createMatrixFromCameraInternal,
+    getMaxMinV2,
+} from '../utils';
 import { get } from '../utils/tempVar';
 import Image2DRenderProxy from './Image2DRenderProxy';
 import { Event } from '../config/';
@@ -33,7 +36,23 @@ interface IOption {
     imgSize?: [number, number];
     imgUrl?: string;
     imgObject: HTMLImageElement;
+    projectionType?: 'pinhole' | 'fisheye' | 'cylindrical';
 }
+
+const boxLineIndices = [
+    [0, 1],
+    [0, 3],
+    [0, 4],
+    [1, 2],
+    [1, 5],
+    [3, 2],
+    [3, 7],
+    [4, 5],
+    [4, 7],
+    [2, 6],
+    [5, 6],
+    [6, 7],
+];
 
 let positionsFrontV3 = [...Array(4)].map((e) => new THREE.Vector3());
 let positionsBackV3 = [...Array(4)].map((e) => new THREE.Vector3());
@@ -42,6 +61,7 @@ let positionsFrontV2 = [...Array(4)].map((e) => new THREE.Vector2());
 let positionsBackV2 = [...Array(4)].map((e) => new THREE.Vector2());
 
 let rotate180 = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(0, 0, 1), Math.PI);
+let imgNdc = new THREE.Vector3();
 
 export default class Image2DRenderView extends Render {
     container: HTMLDivElement;
@@ -88,6 +108,7 @@ export default class Image2DRenderView extends Render {
     renderPoints: boolean = false;
     renderRect: boolean = true;
     renderBox2D: boolean = true;
+    hasCameraConfig: boolean = false;
     // render config
     lineWidth: number = 1;
 
@@ -192,6 +213,16 @@ export default class Image2DRenderView extends Render {
         this.imgAspectRatio = this.imgSize.x / this.imgSize.y;
         this.updateAspectRatioConfig();
 
+        this.hasCameraConfig = !!(
+            option.cameraInternal &&
+            option.cameraExternal &&
+            option.cameraExternal.length === 16
+        );
+        if (!this.hasCameraConfig) {
+            this.render();
+            return;
+        }
+
         this.matrixInternal.copy(
             createMatrixFromCameraInternal(option.cameraInternal, this.imgSize.x, this.imgSize.y),
         );
@@ -237,8 +268,35 @@ export default class Image2DRenderView extends Render {
     worldToImg(pos: THREE.Vector3, target?: THREE.Vector3) {
         // let domElement = this.renderer.domElement;
         target = target || pos;
+        if (!this.hasCameraConfig) return target.copy(pos);
 
         target.copy(pos);
+        const distortion = this.option.cameraInternal?.distortion;
+        if (distortion?.length) {
+            target.applyMatrix4(this.camera.matrixWorldInverse);
+
+            if (Math.abs(target.z) > 1e-6) {
+                const { fx, fy, cx, cy } = this.option.cameraInternal;
+                const [k1 = 0, k2 = 0, p1 = 0, p2 = 0, k3 = 0] = distortion;
+                const x = -target.x / target.z;
+                const y = target.y / target.z;
+                const r2 = x * x + y * y;
+                const r4 = r2 * r2;
+                const r6 = r4 * r2;
+                const radial = 1 + k1 * r2 + k2 * r4 + k3 * r6;
+                const xDistort = x * radial + 2 * p1 * x * y + p2 * (r2 + 2 * x * x);
+                const yDistort = y * radial + p1 * (r2 + 2 * y * y) + 2 * p2 * x * y;
+
+                imgNdc.copy(pos).applyMatrix4(this.camera.matrixWorldInverse);
+                imgNdc.applyMatrix4(this.camera.projectionMatrix);
+
+                target.x = fx * xDistort + cx;
+                target.y = fy * yDistort + cy;
+                target.z = imgNdc.z;
+
+                return target;
+            }
+        }
 
         let matrix = get(THREE.Matrix4);
         matrix.copy(this.camera.projectionMatrix);
@@ -257,6 +315,50 @@ export default class Image2DRenderView extends Render {
         target = target || pos;
         pos.x = ((pos.x + 1) / 2) * this.imgSize.x;
         pos.y = (-(pos.y - 1) / 2) * this.imgSize.y;
+
+        return target;
+    }
+
+    projectWorldToImg(pos: THREE.Vector3, target?: THREE.Vector3) {
+        target = target || pos;
+        if (!this.hasCameraConfig) return target.copy(pos);
+
+        target.copy(pos);
+        target.applyMatrix4(this.matrixExternal);
+
+        const { fx, fy, cx, cy } = this.option.cameraInternal;
+        const x = target.x;
+        const y = target.y;
+        const z = target.z;
+        let xNorm = 0;
+        let yNorm = 0;
+
+        if (this.option.projectionType === 'cylindrical') {
+            xNorm = Math.atan2(x, z);
+            yNorm = y / Math.max(Math.sqrt(x * x + z * z), 1e-5);
+        } else if (this.option.projectionType === 'fisheye') {
+            const radius = Math.max(Math.sqrt(x * x + y * y), 1e-8);
+            const theta = Math.atan2(radius, z);
+            const [k1 = 0, k2 = 0, k3 = 0, k4 = 0] =
+                this.option.cameraInternal?.distortion || [];
+            const theta2 = theta * theta;
+            const theta4 = theta2 * theta2;
+            const theta6 = theta4 * theta2;
+            const theta8 = theta4 * theta4;
+            const thetaDistorted =
+                theta * (1 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
+
+            xNorm = (thetaDistorted * x) / radius;
+            yNorm = (thetaDistorted * y) / radius;
+        } else {
+            const depth = Math.min(Math.max(z, 1e-5), 1e5);
+            xNorm = x / depth;
+            yNorm = y / depth;
+        }
+
+        target.x = fx * xNorm + cx;
+        target.y = fy * yNorm + cy;
+        target.z = z;
 
         return target;
     }
@@ -317,23 +419,11 @@ export default class Image2DRenderView extends Render {
             // this.projectToImg(v);
         });
 
-        reformProjectPoints(positionsFrontV3, positionsBackV3, this.clipCamera);
-
-        // isInCamera([...positionsFrontV3, ...positionsBackV3], this.camera);
-
-        // if (!checkProjectValidV2(positionsFrontV3, positionsBackV3)) {
-        //     console.log('reformProjectPoints');
-        // }
-
         positionsFrontV3.forEach((v) => {
-            v.applyMatrix4(this.camera.matrixWorldInverse);
-            v.applyMatrix4(this.camera.projectionMatrix);
-            this.projectToImg(v);
+            this.projectWorldToImg(v);
         });
         positionsBackV3.forEach((v) => {
-            v.applyMatrix4(this.camera.matrixWorldInverse);
-            v.applyMatrix4(this.camera.projectionMatrix);
-            this.projectToImg(v);
+            this.projectWorldToImg(v);
         });
 
         // let points = [...positionsFrontV3, ...positionsBackV3];
@@ -351,12 +441,39 @@ export default class Image2DRenderView extends Render {
         return { positionsBack: positionsBackV2, positionsFront: positionsFrontV2 };
     }
 
+    getBoxWorldCorners(object: Box) {
+        let bbox = object.geometry.boundingBox as THREE.Box3;
+        getPositions(bbox, positionsFrontV3, positionsBackV3);
+
+        let matrix = get(THREE.Matrix4).identity();
+        matrix.multiply(object.matrixWorld);
+
+        const corners = [...positionsFrontV3, ...positionsBackV3];
+        return corners.map((v) => v.clone().applyMatrix4(matrix));
+    }
+
     get2DObject() {
         return this.pointCloud.getAnnotate2D();
     }
 
     get3DObject() {
         return this.pointCloud.getAnnotate3D();
+    }
+
+    boxIntersectsImage(box: Box) {
+        const box2dInfo = this.getBox2DBox(box);
+        const maxX = this.imgSize.x;
+        const maxY = this.imgSize.y;
+
+        return [...box2dInfo.positionsFront, ...box2dInfo.positionsBack].some(
+            (pos) =>
+                Number.isFinite(pos.x) &&
+                Number.isFinite(pos.y) &&
+                pos.x >= 0 &&
+                pos.x <= maxX &&
+                pos.y >= 0 &&
+                pos.y <= maxY,
+        );
     }
 
     showMask(obj: AnnotateObject) {
@@ -476,7 +593,7 @@ export default class Image2DRenderView extends Render {
     }
 
     renderObjects() {
-        if (!this.renderBox) return;
+        if (!this.renderBox || !this.hasCameraConfig) return;
 
         let { groupPoints, selection, selectColor } = this.pointCloud;
         let { renderer } = this.proxy;
@@ -517,10 +634,15 @@ export default class Image2DRenderView extends Render {
         }
 
         if (this.renderBox) {
+            const rendered = new Set<string>();
             object3Ds.forEach((box) => {
+                if (!box.visible || !this.boxIntersectsImage(box as Box)) return;
+                rendered.add(box.uuid);
                 this.renderBoxData(box as Box);
             });
             selection3Ds.forEach((box) => {
+                if (rendered.has(box.uuid) || !box.visible || !this.boxIntersectsImage(box as Box))
+                    return;
                 this.renderBoxData(box as Box);
             });
         }
@@ -545,30 +667,63 @@ export default class Image2DRenderView extends Render {
 
     renderBoxData(box: Box) {
         let { selectionMap, selectColor, highlightColor } = this.pointCloud;
-        let { renderer } = this.proxy;
-        let boxMaterial = box.material as THREE.LineBasicMaterial;
 
         let color = selectionMap[box.uuid] ? selectColor : box.color;
         let highFlag = this.isHighlight(box);
         color = highFlag ? highlightColor : color;
-        // let mask = this.showMask(box);
-        // if (mask) {
-        //     renderBoxMask(box, this.renderer, this.camera);
-        //     color = this.selectColor;
-        // }
 
-        if (box.dashed) {
-            let dashedMaterial = box.dashedMaterial;
-            dashedMaterial.color = color;
-            box.material = dashedMaterial;
-            renderer.render(box, this.camera);
-            box.material = boxMaterial;
-        } else {
-            let oldColor = boxMaterial.color;
-            boxMaterial.color = color;
-            renderer.render(box, this.camera);
-            boxMaterial.color = oldColor;
-        }
+        this.renderProjectedBoxContour(box, color.getStyle(), box.dashed);
+    }
+
+    renderProjectedBoxContour(box: Box, color: string, dashed = false) {
+        const { context } = this.proxy;
+        const corners = this.getBoxWorldCorners(box);
+        const maxX = this.imgSize.x * 1.2;
+        const maxY = this.imgSize.y * 1.2;
+        const minX = -this.imgSize.x * 0.2;
+        const minY = -this.imgSize.y * 0.2;
+        const valid = (pos: THREE.Vector2) =>
+            Number.isFinite(pos.x) &&
+            Number.isFinite(pos.y) &&
+            pos.x >= minX &&
+            pos.x <= maxX &&
+            pos.y >= minY &&
+            pos.y <= maxY;
+        const world = get(THREE.Vector3);
+        const img = get(THREE.Vector3, 1);
+
+        this.setContextTransform();
+        context.strokeStyle = color;
+        context.lineWidth = 1 / this.getScale();
+
+        context.setLineDash(dashed ? [5, 5] : []);
+        boxLineIndices.forEach(([start, end]) => {
+            const a = corners[start];
+            const b = corners[end];
+            const sampleCount = Math.max(Math.ceil(a.distanceTo(b) * 20), 2);
+            let drawing = false;
+
+            context.beginPath();
+            for (let i = 0; i < sampleCount; i++) {
+                world.lerpVectors(a, b, i / (sampleCount - 1));
+                this.projectWorldToImg(world, img);
+
+                if (!valid(img)) {
+                    drawing = false;
+                    continue;
+                }
+
+                if (!drawing) {
+                    context.moveTo(img.x, img.y);
+                    drawing = true;
+                } else {
+                    context.lineTo(img.x, img.y);
+                }
+            }
+            context.stroke();
+        });
+
+        context.setLineDash([]);
     }
 }
 
@@ -577,15 +732,14 @@ function getPositions(
     positionsFront: THREE.Vector3[],
     positionsBack: THREE.Vector3[],
 ) {
-    // front
-    positionsFront[0].set(box.max.x, box.min.y, box.max.z);
-    positionsFront[1].set(box.max.x, box.min.y, box.min.z);
-    positionsFront[2].set(box.max.x, box.max.y, box.min.z);
-    positionsFront[3].set(box.max.x, box.max.y, box.max.z);
+    // Keep the 2D projection point order aligned with Box.ts line geometry.
+    positionsFront[0].set(box.max.x, box.max.y, box.max.z);
+    positionsFront[1].set(box.min.x, box.max.y, box.max.z);
+    positionsFront[2].set(box.min.x, box.min.y, box.max.z);
+    positionsFront[3].set(box.max.x, box.min.y, box.max.z);
 
-    // back
-    positionsBack[0].set(box.min.x, box.min.y, box.max.z);
-    positionsBack[1].set(box.min.x, box.min.y, box.min.z);
-    positionsBack[2].set(box.min.x, box.max.y, box.min.z);
-    positionsBack[3].set(box.min.x, box.max.y, box.max.z);
+    positionsBack[0].set(box.max.x, box.max.y, box.min.z);
+    positionsBack[1].set(box.min.x, box.max.y, box.min.z);
+    positionsBack[2].set(box.min.x, box.min.y, box.min.z);
+    positionsBack[3].set(box.max.x, box.min.y, box.min.z);
 }

@@ -204,6 +204,7 @@ export interface IImgViewConfig {
     imgSize: [number, number];
     imgUrl: string;
     imgObject: HTMLImageElement;
+    projectionType?: 'pinhole' | 'fisheye' | 'cylindrical';
     // rowMajor?: boolean;
     name: string;
 }
@@ -362,7 +363,7 @@ export interface IFrame {
     occUrl?: string;
     labelUrl?: string;
     pointCacheUrl?: string;
-    binPointDim?: number;
+    binPointDim?: number | number[];
     labelColorMap?: Record<number, string>;
     queryTime: string;
     loadState: LoadStatus;
@@ -432,7 +433,7 @@ export interface IDataResource {
     pointsUrl: string;
     labelUrl?: string;
     pointCacheUrl?: string;
-    binPointDim?: number;
+    binPointDim?: number | number[];
     labelColorMap?: Record<number, string>;
     pointsData: Record<PointAttr, PointAttrValue>;
     occData?: OccGridData;

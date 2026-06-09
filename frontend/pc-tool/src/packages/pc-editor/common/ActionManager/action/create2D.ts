@@ -235,14 +235,24 @@ export const projectObject2D = define({
     },
     execute(
         editor: Editor,
-        args: { updateFlag?: boolean; createFlag?: boolean; selectFlag?: boolean } = {},
+        args: {
+            updateFlag?: boolean;
+            createFlag?: boolean;
+            selectFlag?: boolean;
+            projectType?: 'rect' | 'box2d' | 'both';
+            toggleFlag?: boolean;
+            removeFlag?: boolean;
+        } = {},
     ) {
         let { updateFlag = true, createFlag = true, selectFlag = false } = args;
+        let projectType = args.projectType || 'both';
+        let useRect = projectType === 'rect' || projectType === 'both';
+        let useBox2D = projectType === 'box2d' || projectType === 'both';
         let selection = editor.pc.selection;
         let config = editor.state.config;
         let addObjects: AnnotateObject[] = [];
         let deleteObjects: AnnotateObject[] = [];
-        if (!config.projectPoint4 && !config.projectPoint8) {
+        if ((!useRect || !config.projectPoint4) && (!useBox2D || !config.projectPoint8)) {
             return {
                 addN: 0,
                 updateN: 0,
@@ -289,7 +299,7 @@ export const projectObject2D = define({
             if (
                 object instanceof Rect &&
                 existMapRect[viewId] &&
-                // userData.isProjection &&
+                userData.isProjection &&
                 userData.trackId
             ) {
                 existMapRect[viewId][userData.trackId] = object;
@@ -298,12 +308,48 @@ export const projectObject2D = define({
             if (
                 object instanceof Box2D &&
                 existMapBox2D[viewId] &&
-                // userData.isProjection &&
+                userData.isProjection &&
                 userData.trackId
             ) {
                 existMapBox2D[viewId][userData.trackId] = object;
             }
         });
+
+        const collectProjectionObjects = () => {
+            annotate3D.forEach((object) => {
+                let userData = object.userData as IUserData;
+                let trackId = userData.trackId as string;
+                if (!trackId) return;
+                views.forEach((view) => {
+                    let viewId = view.id;
+                    if (useRect && existMapRect[viewId][trackId]) {
+                        deleteObjects.push(existMapRect[viewId][trackId]);
+                    }
+                    if (useBox2D && existMapBox2D[viewId][trackId]) {
+                        deleteObjects.push(existMapBox2D[viewId][trackId]);
+                    }
+                });
+            });
+        };
+
+        if (args.removeFlag || args.toggleFlag) {
+            collectProjectionObjects();
+            if (args.removeFlag || deleteObjects.length > 0) {
+                deleteObjects = _.uniqBy(deleteObjects, (object) => object.uuid);
+                if (deleteObjects.length > 0) {
+                    editor.cmdManager.execute('delete-object', deleteObjects);
+                }
+                return {
+                    addN: 0,
+                    updateN: 0,
+                    deleteN: deleteObjects.length,
+                    viewN: views.length,
+                    sourceN: annotate3D.length,
+                    inImageN: 0,
+                    reason: deleteObjects.length > 0 ? 'projectionRemoved' : 'noProjectionObject',
+                };
+            }
+        }
 
         let updateN = 0;
         let inImageN = 0;
@@ -317,7 +363,7 @@ export const projectObject2D = define({
                 // isBoxInImage
                 if (utils.isBoxInImage(object, view)) {
                     inImageN++;
-                    if (config.projectPoint8) {
+                    if (useBox2D && config.projectPoint8) {
                         if (existMapBox2D[viewId][trackId]) {
                             if (updateFlag) {
                                 updateProjectBox(view, object, existMapBox2D[viewId][trackId]);
@@ -330,7 +376,7 @@ export const projectObject2D = define({
                         }
                     }
 
-                    if (config.projectPoint4) {
+                    if (useRect && config.projectPoint4) {
                         if (existMapRect[viewId][trackId]) {
                             if (updateFlag) {
                                 updateProjectRect(view, object, existMapRect[viewId][trackId]);
@@ -343,9 +389,9 @@ export const projectObject2D = define({
                         }
                     }
                 } else {
-                    if (existMapRect[viewId][trackId])
+                    if (useRect && existMapRect[viewId][trackId])
                         deleteObjects.push(existMapRect[viewId][trackId]);
-                    if (existMapBox2D[viewId][trackId])
+                    if (useBox2D && existMapBox2D[viewId][trackId])
                         deleteObjects.push(existMapBox2D[viewId][trackId]);
                 }
             });

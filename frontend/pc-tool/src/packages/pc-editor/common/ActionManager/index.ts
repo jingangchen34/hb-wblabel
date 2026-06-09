@@ -14,7 +14,14 @@ export let AllActions = Object.keys(Actions) as IActionName[];
 
 interface IActionArgs {
     createAnnotation: { object: Box };
-    projectObject2D: { updateFlag?: boolean; createFlag?: boolean; selectFlag?: boolean };
+    projectObject2D: {
+        updateFlag?: boolean;
+        createFlag?: boolean;
+        selectFlag?: boolean;
+        projectType?: 'rect' | 'box2d' | 'both';
+        toggleFlag?: boolean;
+        removeFlag?: boolean;
+    };
     [key: string]: any;
 }
 

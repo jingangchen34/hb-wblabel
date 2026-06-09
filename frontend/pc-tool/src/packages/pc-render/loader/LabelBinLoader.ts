@@ -11,7 +11,7 @@ export interface LabelBinData {
 }
 
 export interface LabelBinOptions {
-    pointDim?: number;
+    pointDim?: number | number[];
     labelUrl?: string;
     pointCache?: boolean;
     colorMap?: Record<number, string>;
@@ -57,6 +57,24 @@ function fillColor(
     color[offset + 2] = rgb[2];
 }
 
+function resolvePointDim(binData: ArrayBuffer, labels: Uint8Array, optionDim?: number | number[]) {
+    const floatCount = binData.byteLength / 4;
+    const candidates = (Array.isArray(optionDim) ? optionDim : [optionDim, 6, 7, 4])
+        .filter((dim): dim is number => Number.isFinite(dim) && !!dim && dim >= 3);
+
+    if (labels.length > 0) {
+        const dim = floatCount / labels.length;
+        if (Number.isInteger(dim) && dim >= 3) return dim;
+    }
+
+    const pointDim = candidates.find((dim) => binData.byteLength % (dim * 4) === 0);
+    if (pointDim) return pointDim;
+
+    throw new Error(
+        `Invalid .bin length ${binData.byteLength}; expected one of pointDim=${candidates.join('/')}`,
+    );
+}
+
 export default class LabelBinLoader extends Loader {
     load(
         url: string,
@@ -92,20 +110,18 @@ export default class LabelBinLoader extends Loader {
     }
 
     parse(binData: ArrayBuffer, labelData: ArrayBuffer, options: LabelBinOptions = {}): LabelBinData {
-        const pointDim = options.pointDim || 7;
+        const labels = new Uint8Array(labelData);
+        const pointDim = resolvePointDim(binData, labels, options.pointDim);
         const bytesPerPoint = pointDim * 4;
-        if (binData.byteLength % bytesPerPoint !== 0) {
-            throw new Error(`Invalid .bin length ${binData.byteLength}; expected pointDim=${pointDim}`);
-        }
 
         const pointCount = binData.byteLength / bytesPerPoint;
-        const labels = new Uint8Array(labelData);
         if (labels.length > 0 && labels.length !== pointCount) {
             throw new Error(`.label point count ${labels.length} does not match .bin point count ${pointCount}`);
         }
 
         const source = new Float32Array(binData);
         const position = new Float32Array(pointCount * 3);
+        const intensity = new Float32Array(pointCount);
         const color = new Uint8Array(pointCount * 3);
         const pointLabels = labels.length > 0 ? labels : new Uint8Array(pointCount);
         const mergedColorMap = { ...DEFAULT_LABEL_COLORS, ...(options.colorMap || {}) };
@@ -116,12 +132,13 @@ export default class LabelBinLoader extends Loader {
             position[index * 3] = source[sourceOffset];
             position[index * 3 + 1] = source[sourceOffset + 1];
             position[index * 3 + 2] = source[sourceOffset + 2];
+            intensity[index] = pointDim > 3 ? source[sourceOffset + 3] : 0;
             fillColor(color, index, pointLabels[index], rgbMap, fallback);
         }
 
         return {
             position,
-            intensity: new Float32Array(0),
+            intensity,
             color,
             pointLabels,
         };

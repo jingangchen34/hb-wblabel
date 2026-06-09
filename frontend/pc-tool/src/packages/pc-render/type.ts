@@ -25,6 +25,7 @@ export interface ICameraInternal {
     fy: number;
     cx: number;
     cy: number;
+    distortion?: number[];
 }
 
 export enum AnnotateType {

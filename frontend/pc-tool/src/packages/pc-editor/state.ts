@@ -158,7 +158,7 @@ function getDefaultConfig(): IConfig {
         renderRect: true,
         // renderProjectRect: true,
         renderBox: true,
-        renderProjectBox: true,
+        renderProjectBox: false,
         renderProjectPoint: false,
         //
         FILTER_ALL: 'All',

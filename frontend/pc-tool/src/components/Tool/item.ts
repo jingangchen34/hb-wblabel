@@ -103,7 +103,7 @@ export const allItems: IItemConfig[] = [
     },
     {
         action: 'projection',
-        title: () => 'Projection',
+        title: () => 'Project3D',
         getIcon: function (editor: Editor) {
             return 'iconfont icon-yingshe';
         },
@@ -117,7 +117,7 @@ export const allItems: IItemConfig[] = [
     },
     {
         action: 'reProjection',
-        title: () => 'Re-Projection',
+        title: () => 'Project2D',
         getIcon: function (editor: Editor) {
             return 'iconfont icon-xuanzhuan';
         },

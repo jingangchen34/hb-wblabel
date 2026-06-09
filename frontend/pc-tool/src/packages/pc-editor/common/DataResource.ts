@@ -229,10 +229,10 @@ export default class DataResource {
                     pointCache: true,
                     colorMap: option?.labelColorMap,
                 });
-            } else if (option?.labelUrl) {
+            } else if (option?.labelUrl || /\.bin($|\?)/i.test(pointsUrl)) {
                 this.labelBinLoader.load(pointsUrl, onLoad, onProgressInner, onError, {
                     labelUrl: option.labelUrl,
-                    pointDim: option.binPointDim || 7,
+                    pointDim: option.binPointDim || [6, 7, 4],
                     colorMap: option.labelColorMap,
                 });
             } else {
