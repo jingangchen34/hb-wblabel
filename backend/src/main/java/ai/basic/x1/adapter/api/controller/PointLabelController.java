@@ -1,6 +1,7 @@
 package ai.basic.x1.adapter.api.controller;
 
 import ai.basic.x1.adapter.dto.request.OccClipExportDTO;
+import ai.basic.x1.adapter.dto.request.PointLabelPatchDTO;
 import ai.basic.x1.adapter.dto.request.PointLabelSaveDTO;
 import ai.basic.x1.usecase.PointLabelUseCase;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +37,11 @@ public class PointLabelController {
     @PostMapping("modify")
     public void modify(@RequestBody PointLabelSaveDTO saveDTO) throws IOException {
         pointLabelUseCase.saveLabels(saveDTO);
+    }
+
+    @PostMapping("patch")
+    public void patch(@RequestBody PointLabelPatchDTO patchDTO) throws IOException {
+        pointLabelUseCase.patchLabels(patchDTO);
     }
 
     @PostMapping("export/clip")

@@ -367,6 +367,11 @@ export default class PointCloud extends THREE.EventDispatcher {
         return points?.exportPointLabels();
     }
 
+    getPointLabels() {
+        const points = this.groupPoints.children[0] as Points;
+        return points?.pointLabels;
+    }
+
     // render
     _render() {
         this.dispatchEvent({ type: Event.RENDER_BEFORE });

@@ -16,7 +16,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -95,7 +98,7 @@ public class FileUseCase {
      * @return fileList
      */
     @Transactional(rollbackFor = Throwable.class)
-    public List<FileBO> saveBatchFile(Long userId, List<FileBO> fileBOS) {
+    public synchronized List<FileBO> saveBatchFile(Long userId, List<FileBO> fileBOS) {
         var files = DefaultConverter.convert(fileBOS, File.class);
         Objects.requireNonNull(files).forEach(file -> {
             file.setPathHash(ByteUtil.bytesToLong(SecureUtil.md5().digest(file.getPath())));
@@ -104,8 +107,24 @@ public class FileUseCase {
             file.setUpdatedBy(userId);
             file.setUpdatedAt(OffsetDateTime.now());
         });
-        fileDAO.saveBatch(files);
-        var reFileBOs = DefaultConverter.convert(files, FileBO.class);
+
+        Map<Long, File> fileMap = files.stream()
+                .collect(Collectors.toMap(File::getPathHash, file -> file, (first, second) -> first, LinkedHashMap::new));
+        var lambdaQueryWrapper = Wrappers.lambdaQuery(File.class);
+        lambdaQueryWrapper.in(File::getPathHash, fileMap.keySet());
+        var existingFiles = CollectionUtil.isEmpty(fileMap.keySet()) ? List.<File>of() : fileDAO.list(lambdaQueryWrapper);
+        existingFiles.forEach(file -> fileMap.put(file.getPathHash(), file));
+
+        var existingPathHashes = existingFiles.stream().map(File::getPathHash).collect(Collectors.toSet());
+        var newFiles = files.stream()
+                .filter(file -> !existingPathHashes.contains(file.getPathHash()))
+                .collect(Collectors.toList());
+        if (CollectionUtil.isNotEmpty(newFiles)) {
+            fileDAO.saveBatch(newFiles);
+            newFiles.forEach(file -> fileMap.put(file.getPathHash(), file));
+        }
+
+        var reFileBOs = DefaultConverter.convert(new ArrayList<>(fileMap.values()), FileBO.class);
         reFileBOs.forEach(fileBO -> setUrl(fileBO));
         return reFileBOs;
     }

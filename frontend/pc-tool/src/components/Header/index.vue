@@ -72,6 +72,26 @@
                     iState.fullScreen ? $$('btn-full-exit') : $$('btn-full')
                 }}</div>
             </a-button>
+            <div class="merge-tools" v-if="state.frames.length > 1">
+                <a-switch
+                    v-model:checked="removeBoxPoints"
+                    size="small"
+                    :disabled="blocking"
+                />
+                <span class="merge-text">扣框内点</span>
+                <a-button class="basic" :disabled="blocking" @click="onMergeSelected">
+                    合并所选{{ selectedMergeCount ? `(${selectedMergeCount})` : '' }}
+                </a-button>
+                <a-button class="basic" :disabled="blocking" @click="onMergeAll">合并全部</a-button>
+                <a-button
+                    class="basic"
+                    v-show="mergeActive"
+                    :disabled="blocking"
+                    @click="onCancelMerge"
+                >
+                    取消合并
+                </a-button>
+            </div>
             <a-divider type="vertical" style="height: 32px; background-color: #57575c" />
             <template v-if="editor.state.frameIndex >= 0">
                 <a-button
@@ -146,10 +166,16 @@
         blocking,
         currentFrame,
         dataIndex,
+        removeBoxPoints,
+        selectedMergeCount,
+        mergeActive,
         onIndexChange,
         onHelp,
         onIndexBlur,
         onSave,
+        onMergeSelected,
+        onMergeAll,
+        onCancelMerge,
         onPre,
         onNext,
         onClose,
@@ -243,6 +269,19 @@
             .text {
                 font-size: 18px;
                 margin-left: 4px;
+            }
+
+            .merge-tools {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                margin-left: 8px;
+                white-space: nowrap;
+
+                .merge-text {
+                    color: #bec1ca;
+                    font-size: 12px;
+                }
             }
         }
 

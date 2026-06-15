@@ -14,6 +14,9 @@ export default function useHeader() {
     let { state, bsState } = editor;
     let editorState = editor.state;
     let dataIndex = ref(state.frameIndex + 1);
+    let removeBoxPoints = ref(true);
+    let selectedMergeCount = computed(() => ((state as any).mergeSelectedFrameIds || []).length);
+    let mergeActive = computed(() => !!(state as any).mergeActive);
     let iState = reactive({
         fullScreen: false,
         dataName: '',
@@ -64,6 +67,18 @@ export default function useHeader() {
     };
     function onSave() {
         editor.saveObject();
+    }
+
+    function onMergeSelected() {
+        editor.multiFrameMergeManager.mergeSelected(removeBoxPoints.value);
+    }
+
+    function onMergeAll() {
+        editor.multiFrameMergeManager.mergeAll(removeBoxPoints.value);
+    }
+
+    function onCancelMerge() {
+        editor.multiFrameMergeManager.cancel();
     }
 
     function onPre() {
@@ -309,11 +324,17 @@ export default function useHeader() {
         currentFrame,
         blocking,
         dataIndex,
+        removeBoxPoints,
+        selectedMergeCount,
+        mergeActive,
         onIndexChange,
         onFullScreen,
         onHelp,
         onIndexBlur,
         onSave,
+        onMergeSelected,
+        onMergeAll,
+        onCancelMerge,
         onPre,
         onNext,
         onClose,

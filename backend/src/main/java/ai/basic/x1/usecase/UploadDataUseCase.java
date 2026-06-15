@@ -652,14 +652,22 @@ public class UploadDataUseCase {
         }
 
         addOccClipCameraByIndex(sceneFile, frameIndex, singleDataFile);
-        addOccClipCalib(sceneFile, singleDataFile);
+        addOccClipSceneMeta(sceneFile, singleDataFile);
         return singleDataFile.stream().distinct().collect(Collectors.toList());
     }
 
-    private void addOccClipCalib(File sceneFile, List<File> singleDataFile) {
+    private void addOccClipSceneMeta(File sceneFile, List<File> singleDataFile) {
         var calibFile = FileUtil.file(sceneFile, "calib.json");
         if (calibFile.exists() && calibFile.isFile()) {
             singleDataFile.add(calibFile);
+        }
+        var poseFile = FileUtil.file(sceneFile, "pose.json");
+        if (poseFile.exists() && poseFile.isFile()) {
+            singleDataFile.add(poseFile);
+        }
+        var obstacleFile = findOccClipObstacleFile(sceneFile);
+        if (ObjectUtil.isNotNull(obstacleFile) && obstacleFile.exists() && obstacleFile.isFile()) {
+            singleDataFile.add(obstacleFile);
         }
     }
 

@@ -1,5 +1,5 @@
 import { IDataResource, IFrame, IFileConfig, PointAttr, PointAttrValue } from '../type';
-import { LabelBinLoader, PCDLoader } from 'pc-render';
+import { buildPointLabelColors, LabelBinLoader, PCDLoader } from 'pc-render';
 import Editor from '../Editor';
 // import * as api from '../api';
 import * as utils from '../utils';
@@ -67,6 +67,7 @@ export class ResourceLoader {
                     {
                         labelUrl: config.labelUrl,
                         pointCacheUrl: config.pointCacheUrl,
+                        savedPointLabels: config.savedPointLabels,
                         binPointDim: config.binPointDim,
                         labelColorMap: config.labelColorMap,
                     },
@@ -216,10 +217,14 @@ export default class DataResource {
     async loadPoints(
         pointsUrl: string,
         onProgress?: (percent: number) => void,
-        option?: Pick<IDataResource, 'labelUrl' | 'pointCacheUrl' | 'binPointDim' | 'labelColorMap'>,
+        option?: Pick<IDataResource, 'labelUrl' | 'pointCacheUrl' | 'savedPointLabels' | 'binPointDim' | 'labelColorMap'>,
     ): Promise<any> {
         return new Promise((resolve, reject) => {
-            const onLoad = (data: any) => resolve(data);
+            const onLoad = (data: any) => resolve(this.normalizePointLabels(
+                data,
+                option?.labelColorMap,
+                option?.savedPointLabels,
+            ));
             const onProgressInner = (e: any) => {
                 if (onProgress) onProgress(e.loaded / e.total);
             };
@@ -239,6 +244,32 @@ export default class DataResource {
                 this.pointsLoader.load(pointsUrl, onLoad, onProgressInner, onError);
             }
         });
+    }
+
+    private normalizePointLabels(
+        data: Record<PointAttr, PointAttrValue>,
+        colorMap?: Record<number, string>,
+        savedPointLabels?: Uint8Array,
+    ) {
+        const position = data.position;
+        const pointCount = position ? position.length / 3 : 0;
+        if (!pointCount) return data;
+
+        const labels = data.pointLabels as Uint8Array | undefined;
+        if (!labels || labels.length !== pointCount) {
+            data.pointLabels = new Uint8Array(pointCount);
+        }
+        if (savedPointLabels?.length === pointCount) {
+            data.pointLabels = new Uint8Array(savedPointLabels);
+        } else if (savedPointLabels?.length) {
+            console.warn(`saved point labels length ${savedPointLabels.length} does not match point count ${pointCount}`);
+        }
+
+        const color = data.color as Uint8Array | number[] | undefined;
+        if (savedPointLabels?.length === pointCount || !color || color.length !== pointCount * 3) {
+            data.color = buildPointLabelColors(data.pointLabels as Uint8Array, colorMap);
+        }
+        return data;
     }
 
     setLoadMode(mode: LoadMode) {

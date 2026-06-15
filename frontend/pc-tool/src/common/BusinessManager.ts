@@ -34,8 +34,11 @@ export default class BusinessManager extends BaseBusinessManager {
         if (fileConfig.filter((e) => regLidar.test(e.dirName)).length === 0) {
             throw this.editor.lang('no-point-data');
         }
+        let poseConfig = fileConfig.find((e) => /^pose\.json$/i.test(e.name));
+        let obstacleConfig = fileConfig.find((e) => /^obstacle_3d\.json$/i.test(e.name));
         let cameraConfig = fileConfig.find((e) =>
-            regConfig.test(e.dirName) || regConfig.test(e.name) || /\.json$/i.test(e.name),
+            ![poseConfig?.url, obstacleConfig?.url].includes(e.url) &&
+            (regConfig.test(e.dirName) || regConfig.test(e.name) || /\.json$/i.test(e.name)),
         ) as IFileConfig;
 
         // no camera config
@@ -49,10 +52,16 @@ export default class BusinessManager extends BaseBusinessManager {
         const viewConfigStartedAt = performance.now();
         let info = utils.createViewConfig(fileConfig, cameraInfo);
         logStep('createViewConfig', viewConfigStartedAt);
+        const savedLabelStartedAt = performance.now();
+        const savedPointLabels = await api.getSavedPointLabels(data.id).catch(() => undefined);
+        logStep('getSavedPointLabel', savedLabelStartedAt);
         let config: IDataResource = {
             pointsUrl: info.pointsUrl,
             labelUrl: info.labelUrl,
             pointCacheUrl: info.pointCacheUrl,
+            savedPointLabels,
+            poseUrl: poseConfig?.url,
+            obstacleUrl: obstacleConfig?.url,
             binPointDim: [6, 7, 4],
             pointsData: {},
             viewConfig: info.config,

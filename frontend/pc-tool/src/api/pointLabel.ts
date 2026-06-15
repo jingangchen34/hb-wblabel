@@ -14,6 +14,12 @@ export function getPointLabels(dataId: string | number) {
     return get<Blob>('/api/point-label/frame', { dataId }, { responseType: 'blob' });
 }
 
+export async function getSavedPointLabels(dataId: string | number) {
+    const labels = await getPointLabels(dataId);
+    if (!labels.size) return undefined;
+    return new Uint8Array(await labels.arrayBuffer());
+}
+
 export function savePointLabels(dataId: string | number, labels: Uint8Array, frameId?: string) {
     return post('/api/point-label/save', {
         dataId,
@@ -26,6 +32,20 @@ export function modifyPointLabels(dataId: string | number, labels: Uint8Array, f
     return post('/api/point-label/modify', {
         dataId,
         frameId,
+        labelsBase64: labelsToBase64(labels),
+    });
+}
+
+export function patchPointLabels(
+    dataId: string | number,
+    indices: number[],
+    labels: Uint8Array,
+    pointCount: number,
+) {
+    return post('/api/point-label/patch', {
+        dataId,
+        pointCount,
+        indices,
         labelsBase64: labelsToBase64(labels),
     });
 }

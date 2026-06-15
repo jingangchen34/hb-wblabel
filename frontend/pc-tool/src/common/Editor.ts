@@ -5,16 +5,19 @@ import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
 import * as api from '../api';
 import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
+import MultiFrameMergeManager from './MultiFrameMergeManager';
 
 export default class Editor extends BaseEditor {
     businessManager: BusinessManager;
     dataManager: DataManager;
+    multiFrameMergeManager: MultiFrameMergeManager;
     bsState: IBSState = getDefault();
     constructor() {
         super();
 
         this.businessManager = new BusinessManager(this);
         this.dataManager = new DataManager(this);
+        this.multiFrameMergeManager = new MultiFrameMergeManager(this);
     }
 
     needSave(frames?: IFrame[]) {

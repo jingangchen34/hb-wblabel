@@ -34,6 +34,7 @@
     import * as THREE from 'three';
     import { Box } from 'pc-render';
     import { useInjectEditor } from '../../../state';
+    import { buildPointLabelColors } from '../../../packages/pc-render/occ/pointLabel';
     import * as api from '../../../api';
 
     const labels = [
@@ -61,6 +62,8 @@
     const screenPos = new THREE.Vector3();
     const boxPoint = new THREE.Vector3();
     const boxInvertMatrix = new THREE.Matrix4();
+    const dirtyPointIndices = new Set<number>();
+    let dirtyMergeVersion = -1;
 
     function getMainCanvas() {
         const view = editor.viewManager.getMainView();
@@ -149,6 +152,7 @@
 
         if (indices.length > 0) {
             editor.pc.setPointLabelByIndices(indices, state.label, colorMap);
+            markDirtyIndices(indices);
         }
     }
 
@@ -197,23 +201,190 @@
         }
 
         editor.pc.setPointLabelByIndices(indices, state.label, colorMap);
+        markDirtyIndices(indices);
         editor.showMsg('success', `Relabeled ${indices.length} points`);
     }
 
     async function saveLabels() {
         const frame = editor.getCurrentFrame();
-        const labels = editor.pc.exportPointLabels();
-        if (!frame || !labels) {
+        if (!frame) {
             editor.showMsg('warning', 'No OCC labels loaded');
             return;
         }
+        editor.showLoading({
+            type: 'loading',
+            content: 'Preparing OCC labels...',
+        });
+        await nextFrame();
+
         try {
+            if (editor.multiFrameMergeManager.active) {
+                await saveMergedLabels();
+                return;
+            }
+            const labels = editor.pc.exportPointLabels();
+            if (!labels) {
+                editor.showMsg('warning', 'No OCC labels loaded');
+                return;
+            }
             await api.modifyPointLabels(frame.id, labels, frame.id);
+            updateFrameResourceLabels(frame.id, labels);
+            dirtyPointIndices.clear();
             editor.showMsg('success', 'OCC labels saved');
         } catch (error) {
             console.error(error);
             editor.showMsg('error', 'OCC label save failed');
+        } finally {
+            editor.showLoading(false);
         }
+    }
+
+    async function saveMergedLabels() {
+        const sources = editor.multiFrameMergeManager.mergedSources;
+        const mergedLabels = editor.pc.getPointLabels();
+        if (!sources.length || !mergedLabels || sources.length !== mergedLabels.length) {
+            editor.showMsg('warning', 'Merged OCC labels are not aligned with source frames');
+            return;
+        }
+
+        if (dirtyPointIndices.size > 0 && dirtyMergeVersion !== editor.multiFrameMergeManager.version) {
+            dirtyPointIndices.clear();
+        }
+
+        const patches = new Map<string, { indices: number[]; labels: number[]; pointCount: number }>();
+        const dirtyIndices = await getDirtyMergedIndices(mergedLabels, sources.length);
+        if (dirtyIndices.length === 0) {
+            editor.showMsg('warning', 'No OCC label changes to save');
+            return;
+        }
+        const chunkSize = 50000;
+        for (let dirtyIndex = 0; dirtyIndex < dirtyIndices.length; dirtyIndex++) {
+            const mergedIndex = dirtyIndices[dirtyIndex];
+            const source = sources[mergedIndex];
+            if (!source) continue;
+
+            let patch = patches.get(source.frameId);
+            if (!patch) {
+                patch = {
+                    indices: [],
+                    labels: [],
+                    pointCount: getFramePointCount(source.frameId),
+                };
+                patches.set(source.frameId, patch);
+            }
+            patch.indices.push(source.pointIndex);
+            patch.labels.push(mergedLabels[mergedIndex]);
+
+            if (dirtyIndex % chunkSize === 0) {
+                editor.showLoading({
+                    type: 'loading',
+                    content: `Preparing OCC patch ${Math.round((dirtyIndex / dirtyIndices.length) * 100)}%...`,
+                });
+                await nextFrame();
+            }
+        }
+
+        if (patches.size === 0) {
+            editor.showMsg('warning', 'No source frame labels to save');
+            return;
+        }
+
+        const entries = [...patches.entries()];
+        for (let index = 0; index < entries.length; index++) {
+            const [frameId, patch] = entries[index];
+            editor.showLoading({
+                type: 'loading',
+                content: `Saving OCC labels ${index + 1}/${entries.length}...`,
+            });
+            await api.patchPointLabels(
+                frameId,
+                patch.indices,
+                new Uint8Array(patch.labels),
+                patch.pointCount,
+            );
+            updateFrameResourcePatch(frameId, patch.indices, patch.labels);
+            await new Promise((resolve) => window.setTimeout(resolve, 0));
+        }
+        dirtyPointIndices.clear();
+        editor.multiFrameMergeManager.mergedBaseLabels = new Uint8Array(mergedLabels);
+        editor.showMsg('success', `OCC label changes saved to ${patches.size} frames`);
+    }
+
+    async function getDirtyMergedIndices(mergedLabels: Uint8Array, pointCount: number) {
+        if (dirtyPointIndices.size > 0) {
+            return [...dirtyPointIndices].filter((index) => index >= 0 && index < pointCount);
+        }
+
+        const baseLabels = editor.multiFrameMergeManager.mergedBaseLabels;
+        if (!baseLabels || baseLabels.length !== mergedLabels.length) {
+            return Array.from({ length: pointCount }, (_item, index) => index);
+        }
+
+        const changed: number[] = [];
+        const chunkSize = 200000;
+        for (let index = 0; index < mergedLabels.length; index++) {
+            if (mergedLabels[index] !== baseLabels[index]) changed.push(index);
+            if (index % chunkSize === 0) {
+                editor.showLoading({
+                    type: 'loading',
+                    content: `Checking OCC changes ${Math.round((index / mergedLabels.length) * 100)}%...`,
+                });
+                await nextFrame();
+            }
+        }
+        return changed;
+    }
+
+    function getFramePointCount(frameId: string) {
+        const resource = editor.dataResource.dataMap[frameId];
+        const pointsData = resource?.pointsData as any;
+        const position = pointsData?.position as Float32Array | undefined;
+        const labels = pointsData?.pointLabels as Uint8Array | undefined;
+        return labels?.length || (position ? position.length / 3 : 0);
+    }
+
+    function updateFrameResourcePatch(frameId: string, indices: number[], patchLabels: number[]) {
+        const resource = editor.dataResource.dataMap[frameId];
+        if (!resource?.pointsData) return;
+        const pointsData = resource.pointsData as any;
+        const pointCount = getFramePointCount(frameId);
+        const labels = pointsData.pointLabels?.length
+            ? new Uint8Array(pointsData.pointLabels)
+            : new Uint8Array(pointCount);
+        indices.forEach((pointIndex, index) => {
+            if (pointIndex >= 0 && pointIndex < labels.length) {
+                labels[pointIndex] = patchLabels[index];
+            }
+        });
+        pointsData.pointLabels = labels;
+        pointsData.color = buildPointLabelColors(labels, colorMap);
+        resource.savedPointLabels = new Uint8Array(labels);
+    }
+
+    function updateFrameResourceLabels(frameId: string, labels: Uint8Array) {
+        const resource = editor.dataResource.dataMap[frameId];
+        if (!resource?.pointsData) return;
+        const pointsData = resource.pointsData as any;
+        const position = pointsData.position as Float32Array | undefined;
+        const pointCount = position ? position.length / 3 : labels.length;
+        if (labels.length !== pointCount) {
+            console.warn(`saved point labels length ${labels.length} does not match point count ${pointCount}`);
+            return;
+        }
+        pointsData.pointLabels = new Uint8Array(labels);
+        pointsData.color = buildPointLabelColors(labels, colorMap);
+        resource.savedPointLabels = new Uint8Array(labels);
+    }
+
+    function markDirtyIndices(indices: number[]) {
+        if (editor.multiFrameMergeManager.active) {
+            dirtyMergeVersion = editor.multiFrameMergeManager.version;
+        }
+        indices.forEach((index) => dirtyPointIndices.add(index));
+    }
+
+    function nextFrame() {
+        return new Promise((resolve) => window.setTimeout(resolve, 0));
     }
 
     onBeforeUnmount(() => {

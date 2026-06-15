@@ -1,4 +1,5 @@
 import { Points } from '../points';
+import { Event } from '../config';
 
 export const DEFAULT_POINT_LABEL_COLORS: Record<number, string> = {
     0: '#ffffff',
@@ -41,11 +42,27 @@ export function setPointLabelByIndices(
     label: number,
     colorMap: Record<number, string> = {},
 ) {
-    const labels = points.exportPointLabels();
+    const labels = points.pointLabels;
     if (!labels) return undefined;
+
+    const mergedMap = { ...DEFAULT_POINT_LABEL_COLORS, ...colorMap };
+    const rgb = hexToRgb(mergedMap[label] || '#ffffff');
+    let colorAttr = points.geometry.getAttribute('color') as any;
+    if (!colorAttr || colorAttr.array.length !== labels.length * 3) {
+        points.updatePointLabels(labels, buildPointLabelColors(labels, colorMap));
+        colorAttr = points.geometry.getAttribute('color') as any;
+    }
+    const color = colorAttr.array as Uint8Array;
+
     indices.forEach((index) => {
-        if (index >= 0 && index < labels.length) labels[index] = label;
+        if (index >= 0 && index < labels.length) {
+            labels[index] = label;
+            color[index * 3] = rgb[0];
+            color[index * 3 + 1] = rgb[1];
+            color[index * 3 + 2] = rgb[2];
+        }
     });
-    points.updatePointLabels(labels, buildPointLabelColors(labels, colorMap));
+    colorAttr.needsUpdate = true;
+    points.dispatchEvent({ type: Event.POINTS_CHANGE });
     return labels;
 }

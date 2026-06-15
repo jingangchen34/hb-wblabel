@@ -5,7 +5,11 @@
     >
         <div class="i-scale-head-container">
             <template v-for="(item, index) in configArray" :key="item.key">
-                <div class="ruler-container" :style="_style(index)">
+                <div
+                    class="ruler-container"
+                    :class="{ 'merge-selected': isMergeSelected(index) }"
+                    :style="_style(index)"
+                >
                     <div v-if="_mark(index)" class="ruler-text">{{ index + 1 }}</div>
                     <span :class="{ 'ruler-scale': true, bold: _mark(index) }"></span>
                     <span :style="_style1(index)" class="loaded"></span>
@@ -99,6 +103,7 @@
         }
         return headConfig;
     });
+    const mergeSelectedIds = computed(() => ((editor.state as any).mergeSelectedFrameIds || []) as string[]);
 
     watch(
         () => props.config.curFrameIndex,
@@ -222,13 +227,24 @@
     }
 
     function getFrameIndexByEvent(event: MouseEvent): number {
-        const frameIndex = Math.ceil(event.offsetX / _config.value.spanWidth);
-        return frameIndex;
+        const target = event.currentTarget as HTMLElement;
+        const rect = target.getBoundingClientRect();
+        const scrollLeft = target.parentElement?.scrollLeft || 0;
+        const offsetX = event.clientX - rect.left + scrollLeft;
+        return Math.floor(offsetX / _config.value.spanWidth) + 1;
     }
 
     function onClickTick(event: MouseEvent) {
         const index = getFrameIndexByEvent(event);
+        if (event.shiftKey && props.frames[index - 1]) {
+            editor.multiFrameMergeManager.toggleFrame(props.frames[index - 1] as any);
+            return;
+        }
         onChangeFrameIndex(index);
+    }
+    function isMergeSelected(index: number) {
+        const frame = props.frames[index] as any;
+        return !!frame && mergeSelectedIds.value.includes(String(frame.id));
     }
 
     function onChangeFrameIndex(index: number) {
@@ -364,6 +380,21 @@
 
             &.active {
                 background-color: #1d3f64;
+            }
+
+            &.merge-selected {
+                background-color: rgba(122, 202, 232, 0.18);
+                box-shadow: inset 0 0 0 1px #7acae8;
+
+                &::after {
+                    position: absolute;
+                    inset: 0;
+                    z-index: 5;
+                    border: 1px solid #7acae8;
+                    background: rgba(122, 202, 232, 0.12);
+                    content: '';
+                    pointer-events: none;
+                }
             }
 
             .ruler-text {
