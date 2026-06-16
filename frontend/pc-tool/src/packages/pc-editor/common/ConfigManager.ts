@@ -48,8 +48,15 @@ export default class ConfigManager {
         const velocity = points.geometry.getAttribute('velocity') as THREE.BufferAttribute;
         let pointIntensity = config.pointIntensity;
         let pointInfo = config.pointInfo;
-        if (points.pointLabels?.length) {
+        const hasPointLabels = !!points.pointLabels?.length;
+        const hasOccLabels = points.pointLabels?.some((label) => label > 0);
+        const isViewMode = this.editor.state.modeConfig?.name === 'view';
+        if (hasPointLabels && (hasOccLabels || !isViewMode)) {
             config.pointColorMode = ColorModeEnum.RGB;
+        } else if (hasPointLabels && isViewMode && !hasOccLabels) {
+            config.pointColorMode = ColorModeEnum.HEIGHT;
+        }
+        if (hasOccLabels) {
             config.pointSize = Math.max(config.pointSize, 0.18);
         }
         pointInfo.hasIntensity = !!intensityRange;

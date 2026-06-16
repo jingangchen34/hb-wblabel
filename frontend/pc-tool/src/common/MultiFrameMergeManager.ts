@@ -27,6 +27,11 @@ export default class MultiFrameMergeManager {
     active = false;
     mergedSources: MergedPointSource[] = [];
     mergedBaseLabels?: Uint8Array;
+    private mergedGlobalData?: Record<string, any>;
+    private poseRoot?: any;
+    private obstacleRoot?: any;
+    private pointSizeBeforeMerge?: number;
+    private pointColorModeBeforeMerge?: ColorModeEnum;
     annotateVisibleBeforeMerge = true;
     version = 0;
 
@@ -71,10 +76,38 @@ export default class MultiFrameMergeManager {
         this.active = false;
         this.mergedSources = [];
         this.mergedBaseLabels = undefined;
+        this.mergedGlobalData = undefined;
+        this.poseRoot = undefined;
+        this.obstacleRoot = undefined;
+        this.restorePointDisplayConfig();
         this.editor.pc.annotate3D.visible = this.annotateVisibleBeforeMerge;
         this.version++;
         this.syncState();
         this.restoreCurrentFrameResource();
+    }
+
+    captureDisplayLabels() {
+        if (!this.active || !this.mergedGlobalData) return;
+        const labels = this.editor.pc.getPointLabels();
+        if (labels && labels.length === this.mergedSources.length) {
+            this.mergedGlobalData.pointLabels = new Uint8Array(labels);
+        }
+    }
+
+    async refreshDisplayForCurrentFrame() {
+        if (!this.active || !this.mergedGlobalData || !this.poseRoot) return;
+        this.captureDisplayLabels();
+        const frame = this.editor.getCurrentFrame();
+        if (!frame) return;
+        const config = await this.getResource(frame);
+        const displayData = this.projectMergedToFrame(
+            this.mergedGlobalData,
+            frame,
+            config,
+            this.poseRoot,
+            this.obstacleRoot,
+        );
+        this.showMergedData(displayData);
     }
 
     restoreCurrentFrameResource() {
@@ -115,12 +148,21 @@ export default class MultiFrameMergeManager {
                 metaConfig.obstacleUrl ? api.getUrl(metaConfig.obstacleUrl).catch(() => undefined) : undefined,
             ]);
 
-            const merged = this.mergePointData(frames, configs, poseRoot, obstacleRoot, options.removeBoxPoints);
-            const pointInfo = this.editor.dataResource.calculatePointInfo(merged);
-            this.editor.state.config.pointColorMode = ColorModeEnum.RGB;
-            this.resetPointViewRange();
-            this.editor.setPointCloudData(merged, pointInfo.ground, pointInfo.intensityRange);
-            this.focusMergedPointCloud(merged.position);
+            this.savePointDisplayConfig();
+            const mergedGlobal = this.mergePointData(frames, configs, poseRoot, obstacleRoot, options.removeBoxPoints);
+            this.poseRoot = poseRoot;
+            this.obstacleRoot = obstacleRoot;
+            this.mergedGlobalData = mergedGlobal;
+            const currentFrame = this.editor.getCurrentFrame() || frames[0];
+            const currentConfig = configs[frames.indexOf(currentFrame)] || await this.getResource(currentFrame);
+            const merged = this.projectMergedToFrame(
+                mergedGlobal,
+                currentFrame,
+                currentConfig,
+                poseRoot,
+                obstacleRoot,
+            );
+            this.showMergedData(merged);
             this.annotateVisibleBeforeMerge = this.editor.pc.annotate3D.visible;
             this.editor.pc.annotate3D.visible = false;
             this.active = true;
@@ -132,6 +174,92 @@ export default class MultiFrameMergeManager {
             this.editor.handleErr(error, 'Merge frames failed');
         } finally {
             this.editor.showLoading(false);
+        }
+    }
+
+    private showMergedData(merged: Record<string, any>) {
+        const pointInfo = this.editor.dataResource.calculatePointInfo(merged);
+        const labels = merged.pointLabels as Uint8Array | undefined;
+        if (labels && (!this.isViewMode() || this.hasOccLabels(labels))) {
+            merged.color = buildPointLabelColors(labels, this.getLabelColorMap());
+        }
+        this.applyMergedPointDisplay(labels);
+        this.resetPointViewRange();
+        this.editor.setPointCloudData(merged, pointInfo.ground, pointInfo.intensityRange);
+        this.focusMergedPointCloud(merged.position);
+    }
+
+    private projectMergedToFrame(
+        mergedGlobal: Record<string, any>,
+        frame: IFrame,
+        config: IDataResource,
+        poseRoot: any,
+        obstacleRoot: any,
+    ) {
+        const pose = this.getFramePose(frame, config, poseRoot, obstacleRoot);
+        const inversePose = new THREE.Matrix4()
+            .compose(pose.translation, pose.quaternion, new THREE.Vector3(1, 1, 1))
+            .invert();
+        const sourcePosition = mergedGlobal.position as Float32Array;
+        const position = new Float32Array(sourcePosition.length);
+        const point = new THREE.Vector3();
+        for (let index = 0; index < sourcePosition.length; index += 3) {
+            point.set(sourcePosition[index], sourcePosition[index + 1], sourcePosition[index + 2]);
+            point.applyMatrix4(inversePose);
+            position[index] = point.x;
+            position[index + 1] = point.y;
+            position[index + 2] = point.z;
+        }
+
+        return {
+            ...mergedGlobal,
+            position,
+            intensity: mergedGlobal.intensity,
+            pointLabels: new Uint8Array(mergedGlobal.pointLabels as Uint8Array),
+            color: mergedGlobal.color,
+        };
+    }
+
+    private getLabelColorMap() {
+        return Object.values(this.editor.dataResource.dataMap)
+            .map((resource: any) => resource?.labelColorMap)
+            .find(Boolean);
+    }
+
+    private applyMergedPointDisplay(labels?: Uint8Array) {
+        const config = this.editor.state.config;
+        const hasOccLabels = this.hasOccLabels(labels);
+        config.pointColorMode = hasOccLabels || !this.isViewMode() ? ColorModeEnum.RGB : ColorModeEnum.HEIGHT;
+        if (!hasOccLabels) {
+            config.pointSize = Math.min(config.pointSize, 0.03);
+        }
+    }
+
+    private hasOccLabels(labels?: Uint8Array) {
+        return !!labels?.some((label) => label > 0);
+    }
+
+    private isViewMode() {
+        return this.editor.state.modeConfig?.name === 'view';
+    }
+
+    private savePointDisplayConfig() {
+        const config = this.editor.state.config;
+        if (this.pointSizeBeforeMerge === undefined) {
+            this.pointSizeBeforeMerge = config.pointSize;
+            this.pointColorModeBeforeMerge = config.pointColorMode;
+        }
+    }
+
+    private restorePointDisplayConfig() {
+        const config = this.editor.state.config;
+        if (this.pointSizeBeforeMerge !== undefined) {
+            config.pointSize = this.pointSizeBeforeMerge;
+            this.pointSizeBeforeMerge = undefined;
+        }
+        if (this.pointColorModeBeforeMerge !== undefined) {
+            config.pointColorMode = this.pointColorModeBeforeMerge;
+            this.pointColorModeBeforeMerge = undefined;
         }
     }
 
@@ -183,14 +311,12 @@ export default class MultiFrameMergeManager {
             const sourceIntensity = config.pointsData.intensity as Float32Array | undefined;
             const sourceLabels = config.pointsData.pointLabels as Uint8Array | undefined;
             const boxes = removeBoxPoints ? this.getFrameBoxes(frame) : [];
-            const shouldConvertAxis = this.shouldConvertLidarCarToPoseEgo(config);
             const point = new THREE.Vector3();
 
             for (let i = 0; i < sourcePosition.length / 3; i++) {
                 point.fromArray(sourcePosition, i * 3);
                 if (boxes.length > 0 && this.isInsideAnyBox(point, boxes)) continue;
 
-                if (shouldConvertAxis) this.lidarCarToPoseEgo(point);
                 point.applyQuaternion(pose.quaternion).add(pose.translation);
                 position[targetIndex * 3] = point.x;
                 position[targetIndex * 3 + 1] = point.y;
@@ -217,16 +343,6 @@ export default class MultiFrameMergeManager {
         config.heightRange = [-10000, 10000];
         config.pointHeight = [-Infinity, Infinity];
         config.pointIntensity = [-Infinity, Infinity];
-    }
-
-    private shouldConvertLidarCarToPoseEgo(config: IDataResource) {
-        return (config.viewConfig || []).length >= 7;
-    }
-
-    private lidarCarToPoseEgo(point: THREE.Vector3) {
-        const right = point.x;
-        const front = point.y;
-        point.set(front, -right, point.z);
     }
 
     private focusMergedPointCloud(position: Float32Array) {
@@ -299,8 +415,9 @@ export default class MultiFrameMergeManager {
     }
 
     private getFramePose(frame: IFrame, config: IDataResource, poseRoot: any, obstacleRoot: any): PoseInfo {
-        const egoFile = this.findEgoFile(frame, config, obstacleRoot);
-        const poseNode = this.findNodeByKey(poseRoot, egoFile) || this.findNodeByFrame(poseRoot, frame, config);
+        const obstacleNode = this.findNodeByFrame(obstacleRoot, frame, config);
+        const poseKey = this.findPoseKey(frame, config, obstacleNode);
+        const poseNode = this.findNodeByKey(poseRoot, poseKey) || this.findNodeByFrame(poseRoot, frame, config);
         const pose = this.parsePose(poseNode);
         if (!pose) {
             throw new Error(`Pose not found for frame ${config.name || frame.id}`);
@@ -308,17 +425,35 @@ export default class MultiFrameMergeManager {
         return pose;
     }
 
-    private findEgoFile(frame: IFrame, config: IDataResource, obstacleRoot: any) {
-        const node = this.findNodeByFrame(obstacleRoot, frame, config);
-        return node?.ego_file || node?.egoFile || this.extractFrameToken(config.name || '') || config.name || frame.id;
+    private findPoseKey(frame: IFrame, config: IDataResource, node: any) {
+        return this.normalizePoseKey(node?.ego_pose) ||
+            this.normalizePoseKey(node?.egoPose) ||
+            this.normalizePoseKey(node?.ego_file) ||
+            this.normalizePoseKey(node?.egoFile) ||
+            this.extractFrameToken(config.name || '') ||
+            config.name ||
+            frame.id;
+    }
+
+    private normalizePoseKey(value: any) {
+        if (value === undefined || value === null || value === '') return '';
+        if (typeof value === 'string' || typeof value === 'number') return String(value);
+        if (typeof value === 'object') {
+            return this.normalizePoseKey(value.ego_file) ||
+                this.normalizePoseKey(value.egoFile) ||
+                this.normalizePoseKey(value.timestamp) ||
+                this.normalizePoseKey(value.time) ||
+                this.normalizePoseKey(value.key);
+        }
+        return '';
     }
 
     private findNodeByFrame(root: any, frame: IFrame, config: IDataResource): any {
-        const tokens = [config.name, this.extractFrameToken(config.name || ''), frame.id]
+        const tokens = [config.name, this.extractFrameToken(config.name || '')]
             .filter(Boolean)
             .map((item) => String(item));
         return this.walkFind(root, (node, key) => {
-            if (tokens.some((token) => key === token || key.includes(token))) return true;
+            if (tokens.some((token) => key === token)) return true;
             const values = [node?.filepath, node?.filePath, node?.name, node?.timestamp, node?.FrameID];
             return values.some((value) => value !== undefined && tokens.some((token) => String(value).includes(token)));
         });
@@ -326,7 +461,8 @@ export default class MultiFrameMergeManager {
 
     private findNodeByKey(root: any, key: string) {
         if (!key) return undefined;
-        return this.walkFind(root, (_node, nodeKey) => nodeKey === key || nodeKey.includes(key));
+        const normalizedKey = String(key);
+        return this.walkFind(root, (_node, nodeKey) => nodeKey === normalizedKey);
     }
 
     private walkFind(root: any, predicate: (node: any, key: string) => boolean): any {
@@ -368,10 +504,7 @@ export default class MultiFrameMergeManager {
         if (Array.isArray(value) && value.length >= 4) {
             const items = value.slice(0, 4).map((item) => Number(item));
             if (items.every((item) => Number.isFinite(item))) {
-                return this.chooseVehiclePoseQuaternion(
-                    new THREE.Quaternion(items[0], items[1], items[2], items[3]).normalize(),
-                    new THREE.Quaternion(items[1], items[2], items[3], items[0]).normalize(),
-                );
+                return new THREE.Quaternion(items[0], items[1], items[2], items[3]).normalize();
             }
         }
         if (value) {
@@ -384,13 +517,6 @@ export default class MultiFrameMergeManager {
             }
         }
         return undefined;
-    }
-
-    private chooseVehiclePoseQuaternion(xyzw: THREE.Quaternion, wxyz: THREE.Quaternion) {
-        const up = new THREE.Vector3(0, 0, 1);
-        const xyzwUp = up.clone().applyQuaternion(xyzw);
-        const wxyzUp = up.clone().applyQuaternion(wxyz);
-        return xyzwUp.z >= wxyzUp.z ? xyzw : wxyz;
     }
 
     private extractFrameToken(name: string) {

@@ -1,5 +1,14 @@
 <template>
     <div class="occ-label-panel">
+        <div
+            v-show="brushPreview.visible"
+            class="brush-preview"
+            :style="{
+                width: `${state.radius * 2}px`,
+                height: `${state.radius * 2}px`,
+                transform: `translate(${brushPreview.x - state.radius}px, ${brushPreview.y - state.radius}px)`,
+            }"
+        ></div>
         <div class="panel-title">OCC Labels</div>
         <div class="legend">
             <button
@@ -18,10 +27,23 @@
             <input v-model.number="state.radius" min="2" max="80" type="range" />
             <span>{{ state.radius }}px</span>
         </div>
+        <div class="control-row">
+            <label>Point Size</label>
+            <input
+                v-model.number="config.pointSize"
+                min="0.01"
+                max="0.4"
+                step="0.01"
+                type="range"
+                @input="updatePointSize"
+            />
+            <span>{{ config.pointSize.toFixed(2) }}</span>
+        </div>
         <div class="actions">
             <button :class="{ active: state.enabled }" @click="toggleBrush">
                 {{ state.enabled ? 'Brush On' : 'Brush Off' }}
             </button>
+            <button :disabled="undoStack.length === 0" @click="undoLastAction">Undo</button>
             <button @click="fillSelectedBox">Fill Box</button>
             <button @click="saveLabels">Save</button>
         </div>
@@ -32,7 +54,7 @@
 <script setup lang="ts">
     import { reactive, onBeforeUnmount } from 'vue';
     import * as THREE from 'three';
-    import { Box } from 'pc-render';
+    import { Box, PointsMaterial } from 'pc-render';
     import { useInjectEditor } from '../../../state';
     import { buildPointLabelColors } from '../../../packages/pc-render/occ/pointLabel';
     import * as api from '../../../api';
@@ -53,16 +75,24 @@
     }, {} as Record<number, string>);
 
     const editor = useInjectEditor();
+    const config = editor.state.config;
     const state = reactive({
         enabled: false,
         painting: false,
         label: 6,
         radius: 12,
     });
+    const brushPreview = reactive({
+        visible: false,
+        x: 0,
+        y: 0,
+    });
     const screenPos = new THREE.Vector3();
     const boxPoint = new THREE.Vector3();
     const boxInvertMatrix = new THREE.Matrix4();
     const dirtyPointIndices = new Set<number>();
+    const undoStack = reactive<{ indices: number[]; labels: number[] }[]>([]);
+    let activeUndo: Map<number, number> | undefined;
     let dirtyMergeVersion = -1;
 
     function getMainCanvas() {
@@ -89,7 +119,8 @@
         canvas.addEventListener('pointerdown', onPointerDown, true);
         canvas.addEventListener('pointermove', onPointerMove, true);
         canvas.addEventListener('pointerup', onPointerUp, true);
-        canvas.addEventListener('pointerleave', onPointerUp, true);
+        canvas.addEventListener('pointercancel', onPointerUp, true);
+        canvas.addEventListener('pointerleave', onPointerLeave, true);
         canvas.style.cursor = 'crosshair';
     }
 
@@ -97,23 +128,30 @@
         canvas.removeEventListener('pointerdown', onPointerDown, true);
         canvas.removeEventListener('pointermove', onPointerMove, true);
         canvas.removeEventListener('pointerup', onPointerUp, true);
-        canvas.removeEventListener('pointerleave', onPointerUp, true);
+        canvas.removeEventListener('pointercancel', onPointerUp, true);
+        canvas.removeEventListener('pointerleave', onPointerLeave, true);
         canvas.style.cursor = '';
         state.painting = false;
+        brushPreview.visible = false;
+        finishUndoAction();
     }
 
     function onPointerDown(event: PointerEvent) {
         if (!state.enabled) return;
         event.preventDefault();
         event.stopPropagation();
+        updateBrushPreview(event);
         state.painting = true;
+        activeUndo = new Map();
         paint(event);
     }
 
     function onPointerMove(event: PointerEvent) {
-        if (!state.enabled || !state.painting) return;
+        if (!state.enabled) return;
         event.preventDefault();
         event.stopPropagation();
+        updateBrushPreview(event);
+        if (!state.painting) return;
         paint(event);
     }
 
@@ -121,7 +159,24 @@
         if (!state.enabled) return;
         event.preventDefault();
         event.stopPropagation();
+        updateBrushPreview(event);
         state.painting = false;
+        finishUndoAction();
+    }
+
+    function onPointerLeave(event: PointerEvent) {
+        if (!state.enabled) return;
+        event.preventDefault();
+        event.stopPropagation();
+        brushPreview.visible = false;
+        state.painting = false;
+        finishUndoAction();
+    }
+
+    function updateBrushPreview(event: PointerEvent) {
+        brushPreview.visible = state.enabled;
+        brushPreview.x = event.clientX;
+        brushPreview.y = event.clientY;
     }
 
     function paint(event: PointerEvent) {
@@ -151,9 +206,60 @@
         }
 
         if (indices.length > 0) {
-            editor.pc.setPointLabelByIndices(indices, state.label, colorMap);
-            markDirtyIndices(indices);
+            applyLabelIndices(indices, state.label);
         }
+    }
+
+    function applyLabelIndices(indices: number[], label: number) {
+        const labels = editor.pc.exportPointLabels();
+        if (!labels) return;
+        const changed = indices.filter((index) => index >= 0 && index < labels.length && labels[index] !== label);
+        if (changed.length === 0) return;
+        recordUndo(changed, labels);
+        editor.pc.setPointLabelByIndices(changed, label, colorMap);
+        markDirtyIndices(changed);
+    }
+
+    function recordUndo(indices: number[], labels: Uint8Array) {
+        if (!activeUndo) activeUndo = new Map();
+        indices.forEach((index) => {
+            if (!activeUndo?.has(index)) activeUndo?.set(index, labels[index]);
+        });
+    }
+
+    function finishUndoAction() {
+        if (!activeUndo || activeUndo.size === 0) {
+            activeUndo = undefined;
+            return;
+        }
+        undoStack.push({
+            indices: [...activeUndo.keys()],
+            labels: [...activeUndo.values()],
+        });
+        if (undoStack.length > 20) undoStack.shift();
+        activeUndo = undefined;
+    }
+
+    function undoLastAction() {
+        finishUndoAction();
+        const action = undoStack.pop();
+        const labels = editor.pc.exportPointLabels();
+        if (!action || !labels) return;
+        action.indices.forEach((pointIndex, index) => {
+            if (pointIndex >= 0 && pointIndex < labels.length) {
+                labels[pointIndex] = action.labels[index];
+            }
+        });
+        editor.pc.setPointLabels(labels, colorMap);
+        markDirtyIndices(action.indices);
+    }
+
+    function updatePointSize() {
+        const points = getPoints();
+        const material = points?.material as PointsMaterial | undefined;
+        if (!material) return;
+        material.setUniforms({ pointSize: config.pointSize * 10 });
+        editor.pc.render();
     }
 
     function getSelectedBox() {
@@ -200,8 +306,9 @@
             return;
         }
 
-        editor.pc.setPointLabelByIndices(indices, state.label, colorMap);
-        markDirtyIndices(indices);
+        activeUndo = new Map();
+        applyLabelIndices(indices, state.label);
+        finishUndoAction();
         editor.showMsg('success', `Relabeled ${indices.length} points`);
     }
 
@@ -230,6 +337,7 @@
             await api.modifyPointLabels(frame.id, labels, frame.id);
             updateFrameResourceLabels(frame.id, labels);
             dirtyPointIndices.clear();
+            undoStack.splice(0, undoStack.length);
             editor.showMsg('success', 'OCC labels saved');
         } catch (error) {
             console.error(error);
@@ -306,6 +414,7 @@
             await new Promise((resolve) => window.setTimeout(resolve, 0));
         }
         dirtyPointIndices.clear();
+        undoStack.splice(0, undoStack.length);
         editor.multiFrameMergeManager.mergedBaseLabels = new Uint8Array(mergedLabels);
         editor.showMsg('success', `OCC label changes saved to ${patches.size} frames`);
     }
@@ -440,9 +549,10 @@
             font-variant-numeric: tabular-nums;
         }
 
-        .brush-row {
+        .brush-row,
+        .control-row {
             display: grid;
-            grid-template-columns: 42px 1fr 44px;
+            grid-template-columns: 64px 1fr 44px;
             align-items: center;
             gap: 6px;
             margin-top: 10px;
@@ -451,7 +561,7 @@
 
         .actions {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
             gap: 6px;
             margin-top: 10px;
         }
@@ -469,11 +579,28 @@
             background: #155996;
         }
 
+        .actions button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
         .hint {
             margin-top: 8px;
             color: #8f949f;
             font-size: 11px;
             line-height: 16px;
         }
+    }
+
+    .brush-preview {
+        position: fixed;
+        left: 0;
+        top: 0;
+        z-index: 10000;
+        pointer-events: none;
+        border: 1px dashed rgba(255, 255, 255, 0.95);
+        border-radius: 50%;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+        will-change: transform, width, height;
     }
 </style>

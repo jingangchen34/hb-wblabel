@@ -20,6 +20,12 @@ export default class Editor extends BaseEditor {
         this.multiFrameMergeManager = new MultiFrameMergeManager(this);
     }
 
+    async loadFrame(index: number, showLoading: boolean = true, force: boolean = false) {
+        this.multiFrameMergeManager.captureDisplayLabels();
+        await super.loadFrame(index, showLoading, force);
+        await this.multiFrameMergeManager.refreshDisplayForCurrentFrame();
+    }
+
     needSave(frames?: IFrame[]) {
         frames = frames || this.state.frames;
         let needSaveData = frames.filter((e) => e.needSave);
