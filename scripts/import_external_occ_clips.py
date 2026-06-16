@@ -38,6 +38,7 @@ class VarGen:
         self.file_index = 0
         self.scene_index = 0
         self.class_index = 0
+        self.dataset_index = 0
 
     def file(self) -> str:
         self.file_index += 1
@@ -50,6 +51,10 @@ class VarGen:
     def class_id(self) -> str:
         self.class_index += 1
         return f"@class_{self.class_index}"
+
+    def dataset(self) -> str:
+        self.dataset_index += 1
+        return f"@dataset_{self.dataset_index}"
 
 
 def sql_str(value: str | os.PathLike[str] | None) -> str:
@@ -169,8 +174,43 @@ def dir_node(name: str, children: list[str]) -> str:
     return f"JSON_OBJECT('name', {sql_json_str(name)}, 'type', 'directory', 'files', JSON_ARRAY({', '.join(children)}))"
 
 
-def make_clip_display_name(clip_dir: Path, root: Path) -> str:
+def make_clip_display_name(clip_dir: Path, root: Path, dataset_name: str | None = None) -> str:
+    if dataset_name and args_safe_name(clip_dir.parent.name) == args_safe_name(dataset_name):
+        return clip_dir.name
     return rel_posix(clip_dir, root)
+
+
+def args_safe_name(name: str | None) -> str:
+    return (name or "").strip()
+
+
+def dataset_name_for_clip(clip_dir: Path, root: Path, args: argparse.Namespace) -> str:
+    if args.dataset_from == "clip-parent":
+        return clip_dir.parent.name
+    if args.dataset_from == "root-child":
+        try:
+            return clip_dir.resolve().relative_to(root.resolve()).parts[0]
+        except IndexError:
+            return args.dataset_name
+    return args.dataset_name
+
+
+def dataset_description_for_name(name: str, args: argparse.Namespace) -> str:
+    if args.dataset_description:
+        return args.dataset_description
+    return f"Imported external OCC clips for {name}"
+
+
+def insert_dataset_sql(name: str, args: argparse.Namespace, var: str) -> list[str]:
+    description = dataset_description_for_name(name, args)
+    return [
+        f"-- Dataset: {name}",
+        "INSERT INTO `dataset` (`name`, `type`, `description`, `is_deleted`, `del_unique_key`, `created_at`, `created_by`, `updated_at`, `updated_by`) "
+        f"VALUES ({sql_str(name)}, 'LIDAR_FUSION', {sql_str(description)}, b'0', 0, NOW(), {args.user_id}, NOW(), {args.user_id}) "
+        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), `type`=VALUES(`type`), `updated_at`=NOW(), `updated_by`=VALUES(`updated_by`);",
+        f"SET {var}=LAST_INSERT_ID();",
+        "",
+    ]
 
 
 def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
@@ -183,17 +223,20 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
         "SET NAMES utf8mb4;",
         "START TRANSACTION;",
         "",
-        "INSERT INTO `dataset` (`name`, `type`, `description`, `is_deleted`, `del_unique_key`, `created_at`, `created_by`, `updated_at`, `updated_by`) "
-        f"VALUES ({sql_str(args.dataset_name)}, 'LIDAR_FUSION', {sql_str(args.dataset_description)}, b'0', 0, NOW(), {args.user_id}, NOW(), {args.user_id}) "
-        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), `type`=VALUES(`type`), `updated_at`=NOW(), `updated_by`=VALUES(`updated_by`);",
-        "SET @dataset_id=LAST_INSERT_ID();",
-        "",
     ]
     frame_total = 0
-    class_vars: dict[str, str] = {}
+    dataset_vars: dict[str, str] = {}
+    class_vars: dict[tuple[str, str], str] = {}
 
     for clip_dir in clips:
-        clip_name = make_clip_display_name(clip_dir, root)
+        dataset_name = dataset_name_for_clip(clip_dir, root, args)
+        dataset_var = dataset_vars.get(dataset_name)
+        if dataset_var is None:
+            dataset_var = vargen.dataset()
+            dataset_vars[dataset_name] = dataset_var
+            lines.extend(insert_dataset_sql(dataset_name, args, dataset_var))
+
+        clip_name = make_clip_display_name(clip_dir, root, dataset_name)
         scene_var = vargen.scene()
         pose = clip_dir / "pose.json"
         obstacle = find_obstacle_file(clip_dir)
@@ -204,7 +247,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
         lines.extend([
             f"-- Scene: {clip_name}",
             "INSERT INTO `data` (`dataset_id`, `name`, `order_name`, `content`, `type`, `parent_id`, `status`, `annotation_status`, `split_type`, `is_deleted`, `del_unique_key`, `created_at`, `created_by`, `updated_at`, `updated_by`) "
-            f"VALUES (@dataset_id, {sql_str(clip_name)}, {sql_str(clip_name)}, JSON_ARRAY(), 'SCENE', 0, 'VALID', 'NOT_ANNOTATED', 'NOT_SPLIT', b'0', 0, NOW(), {args.user_id}, NOW(), {args.user_id}) "
+            f"VALUES ({dataset_var}, {sql_str(clip_name)}, {sql_str(clip_name)}, JSON_ARRAY(), 'SCENE', 0, 'VALID', 'NOT_ANNOTATED', 'NOT_SPLIT', b'0', 0, NOW(), {args.user_id}, NOW(), {args.user_id}) "
             "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), `order_name`=VALUES(`order_name`), `updated_at`=NOW(), `updated_by`=VALUES(`updated_by`);",
             f"SET {scene_var}=LAST_INSERT_ID();",
             "",
@@ -268,7 +311,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
             content_expr = f"JSON_ARRAY({', '.join(content_nodes)})"
             lines.extend([
                 "INSERT INTO `data` (`dataset_id`, `name`, `order_name`, `content`, `type`, `parent_id`, `status`, `annotation_status`, `split_type`, `is_deleted`, `del_unique_key`, `created_at`, `created_by`, `updated_at`, `updated_by`) "
-                f"VALUES (@dataset_id, {sql_str(frame_name)}, {sql_str(frame_name)}, {content_expr}, 'SINGLE_DATA', {scene_var}, 'VALID', 'NOT_ANNOTATED', 'NOT_SPLIT', b'0', 0, NOW(), {args.user_id}, NOW(), {args.user_id}) "
+                f"VALUES ({dataset_var}, {sql_str(frame_name)}, {sql_str(frame_name)}, {content_expr}, 'SINGLE_DATA', {scene_var}, 'VALID', 'NOT_ANNOTATED', 'NOT_SPLIT', b'0', 0, NOW(), {args.user_id}, NOW(), {args.user_id}) "
                 "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), `content`=VALUES(`content`), `order_name`=VALUES(`order_name`), `updated_at`=NOW(), `updated_by`=VALUES(`updated_by`);",
                 "SET @data_id=LAST_INSERT_ID();",
                 "",
@@ -281,12 +324,13 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
                         continue
                     class_name = annotation["className"]
                     class_key = normalize_class_name(class_name)
-                    class_var = class_vars.get(class_key)
+                    dataset_class_key = (dataset_name, class_key)
+                    class_var = class_vars.get(dataset_class_key)
                     if class_var is None:
                         class_var = vargen.class_id()
-                        class_vars[class_key] = class_var
-                        lines.extend(insert_class_sql(class_name, args.user_id, class_var))
-                    lines.extend(insert_annotation_sql(annotation, class_var, args.user_id))
+                        class_vars[dataset_class_key] = class_var
+                        lines.extend(insert_class_sql(class_name, dataset_var, args.user_id, class_var))
+                    lines.extend(insert_annotation_sql(annotation, dataset_var, class_var, args.user_id))
                 if objects:
                     lines.append("")
 
@@ -294,7 +338,9 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
         "COMMIT;",
         "",
         "-- Imported scenes:",
-        "SELECT id, name FROM `data` WHERE dataset_id=@dataset_id AND type='SCENE' AND is_deleted=b'0' ORDER BY name;",
+        "SELECT d.id AS dataset_id, d.name AS dataset_name, s.id AS scene_id, s.name AS scene_name "
+        "FROM `dataset` d JOIN `data` s ON s.dataset_id=d.id "
+        "WHERE s.type='SCENE' AND s.is_deleted=b'0' ORDER BY d.name, s.name;",
     ])
     return "\n".join(lines), len(clips), frame_total
 
@@ -513,16 +559,16 @@ def class_color(name: str) -> str:
     return colors[digest % len(colors)]
 
 
-def insert_class_sql(class_name: str, user_id: int, var: str) -> list[str]:
+def insert_class_sql(class_name: str, dataset_var: str, user_id: int, var: str) -> list[str]:
     return [
         "INSERT INTO `dataset_class` (`dataset_id`, `name`, `color`, `tool_type`, `tool_type_options`, `attributes`, `created_at`, `created_by`, `updated_at`, `updated_by`) "
-        f"VALUES (@dataset_id, {sql_str(class_name)}, {sql_str(class_color(class_name))}, 'CUBOID', JSON_OBJECT(), JSON_ARRAY(), NOW(), {user_id}, NOW(), {user_id}) "
+        f"VALUES ({dataset_var}, {sql_str(class_name)}, {sql_str(class_color(class_name))}, 'CUBOID', JSON_OBJECT(), JSON_ARRAY(), NOW(), {user_id}, NOW(), {user_id}) "
         "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), `updated_at`=NOW(), `updated_by`=VALUES(`updated_by`);",
         f"SET {var}=LAST_INSERT_ID();",
     ]
 
 
-def insert_annotation_sql(annotation: dict, class_var: str, user_id: int) -> list[str]:
+def insert_annotation_sql(annotation: dict, dataset_var: str, class_var: str, user_id: int) -> list[str]:
     contour = (
         "JSON_OBJECT("
         "'center3D', " + point_sql(annotation["center3D"]) + ", "
@@ -546,7 +592,7 @@ def insert_annotation_sql(annotation: dict, class_var: str, user_id: int) -> lis
     )
     return [
         "INSERT INTO `data_annotation_object` (`dataset_id`, `data_id`, `class_id`, `class_attributes`, `source_type`, `source_id`, `created_at`, `created_by`, `updated_at`, `updated_by`) "
-        f"VALUES (@dataset_id, @data_id, {class_var}, {class_attrs}, 'IMPORTED', -1, NOW(), {user_id}, NOW(), {user_id});"
+        f"VALUES ({dataset_var}, @data_id, {class_var}, {class_attrs}, 'IMPORTED', -1, NOW(), {user_id}, NOW(), {user_id});"
     ]
 
 
@@ -557,13 +603,23 @@ def point_sql(point: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate SQL for externally stored OCC clips.")
     parser.add_argument("--root", required=True, help="External data root, e.g. /home/user/cjg/conch_data/fusiondet_data/7cam_data")
-    parser.add_argument("--dataset-name", required=True, help="Dataset name to create or update in Xtreme1")
+    parser.add_argument("--dataset-name", default=None, help="Dataset name to create or update in Xtreme1 when --dataset-from fixed")
+    parser.add_argument(
+        "--dataset-from",
+        choices=("fixed", "clip-parent", "root-child"),
+        default="fixed",
+        help="How to assign clips to datasets: fixed uses --dataset-name, clip-parent uses each clip directory's parent, root-child uses the first path segment under --root",
+    )
     parser.add_argument("--output", default="external_occ_import.sql", help="Output SQL path")
     parser.add_argument("--bucket-name", default="external-data", help="Logical bucket name recognized by backend")
     parser.add_argument("--dataset-description", default="Imported external OCC clips", help="Dataset description")
     parser.add_argument("--user-id", type=int, default=1, help="Creator/updater user id")
     parser.add_argument("--skip-obstacle-annotations", action="store_true", help="Only register files and frames; do not import initial 3D boxes from obstacle_3d.json")
     args = parser.parse_args()
+    if args.dataset_from == "fixed" and not args.dataset_name:
+        parser.error("--dataset-name is required when --dataset-from=fixed")
+    if args.dataset_from != "fixed" and not args.dataset_name:
+        args.dataset_name = Path(args.root).resolve().name
 
     sql, clip_count, frame_count = generate_sql(args)
     output = Path(args.output)

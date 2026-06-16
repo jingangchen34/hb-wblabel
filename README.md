@@ -132,7 +132,7 @@ Generate the import SQL. This scans every clip under the root that contains `pos
 ```bash
 python3 scripts/import_external_occ_clips.py \
   --root /home/user/cjg/conch_data/fusiondet_data/7cam_data \
-  --dataset-name 7cam_data \
+  --dataset-from clip-parent \
   --output /tmp/external_occ_import.sql
 ```
 
@@ -142,7 +142,7 @@ Import the generated SQL into the running MySQL container:
 docker compose exec -T mysql mysql -uxtreme1 -pRc4K3L6f xtreme1 < /tmp/external_occ_import.sql
 ```
 
-After import, open `http://<server-ip>:8190`, find dataset `7cam_data`, and open a scene such as `chizhou/2025-10-24-10-26`.
+With `--dataset-from clip-parent`, each clip is placed in a dataset named after the clip directory's parent. For example, `/home/user/cjg/conch_data/fusiondet_data/7cam_data/chizhou/cz_quliuc/2025-10-24-10-26` is imported as dataset `cz_quliuc` and scene `2025-10-24-10-26`. After import, open `http://<server-ip>:8190`, find the generated dataset, and open its scenes.
 
 What the importer writes:
 
@@ -157,8 +157,18 @@ The original files remain read-only. 3D box edits are saved in MySQL through the
 ```bash
 python3 scripts/import_external_occ_clips.py \
   --root /home/user/cjg/conch_data/fusiondet_data/7cam_data \
-  --dataset-name 7cam_data \
+  --dataset-from clip-parent \
   --skip-obstacle-annotations
+```
+
+If you want to force all clips into one dataset instead, use:
+
+```bash
+python3 scripts/import_external_occ_clips.py \
+  --root /home/user/cjg/conch_data/fusiondet_data/7cam_data \
+  --dataset-name 7cam_data \
+  --dataset-from fixed \
+  --output /tmp/external_occ_import.sql
 ```
 
 Docker Compose advanced commands:
