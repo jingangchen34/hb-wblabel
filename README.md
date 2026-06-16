@@ -104,6 +104,63 @@ Visit [http://localhost:8190](http://localhost:8190) in the browser (Google Chro
 
 Docker compose will pull all service images from Docker Hub, including basic services `MySQL`, `Redis`, `MinIO`, and application services `backend`, `frontend`. You can find the username, password, hot binding port to access MySQL, Redis and MinIO in `docker-compose.yml`, for example you can access MinIO console at http://localhost:8194. We use Docker volume to save data, so you won't lose any data between container recreating.
 
+### Import External OCC Clips Without Copying Large Files
+
+For large server-side datasets, you can keep the original clip files on disk and only register their metadata in MySQL. The source files are mounted read-only and served by nginx under `/external-data/`; annotation edits are still saved by the backend into MySQL and the `occ-annotations` Docker volume, not back to the original data directory.
+
+Example source layout:
+
+```text
+/home/user/cjg/conch_data/fusiondet_data/7cam_data/
+  chizhou/
+    2025-10-24-10-26/
+      pose.json
+      anno/obstacle_3d.json
+      lidars/...
+      cameras/...
+```
+
+Start services with the external data override:
+
+```bash
+export EXTERNAL_DATA_ROOT=/home/user/cjg/conch_data/fusiondet_data/7cam_data
+docker compose -f docker-compose.yml -f docker-compose.external-data.yml up -d --build
+```
+
+Generate the import SQL. This scans every clip under the root that contains `pose.json`, `obstacle_3d.json`, and `lidars/*.bin`. Scene names are created from the path relative to the root, for example `chizhou/2025-10-24-10-26`.
+
+```bash
+python3 scripts/import_external_occ_clips.py \
+  --root /home/user/cjg/conch_data/fusiondet_data/7cam_data \
+  --dataset-name 7cam_data \
+  --output /tmp/external_occ_import.sql
+```
+
+Import the generated SQL into the running MySQL container:
+
+```bash
+docker compose exec -T mysql mysql -uxtreme1 -pRc4K3L6f xtreme1 < /tmp/external_occ_import.sql
+```
+
+After import, open `http://<server-ip>:8190`, find dataset `7cam_data`, and open a scene such as `chizhou/2025-10-24-10-26`.
+
+What the importer writes:
+
+- `dataset`: creates or reuses the dataset name you pass in.
+- `data`: creates one `SCENE` row per clip and one `SINGLE_DATA` row per lidar frame.
+- `file`: registers each source file with `bucket_name = external-data` and a path relative to `EXTERNAL_DATA_ROOT`.
+- `data_annotation_object`: imports initial 3D boxes from `obstacle_3d.json` when recognizable fields are present.
+- `dataset_class`: creates missing cuboid classes found in `obstacle_3d.json`.
+
+The original files remain read-only. 3D box edits are saved in MySQL through the normal annotation APIs. OCC point-label edits are saved under the backend `occ-annotations` volume and indexed in the platform. To skip initial box import and only register files/frames, add:
+
+```bash
+python3 scripts/import_external_occ_clips.py \
+  --root /home/user/cjg/conch_data/fusiondet_data/7cam_data \
+  --dataset-name 7cam_data \
+  --skip-obstacle-annotations
+```
+
 Docker Compose advanced commands:
 
 ```bash

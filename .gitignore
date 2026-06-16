@@ -4,6 +4,8 @@ target/
 
 dist/
 node_modules/
+__pycache__/
+*.py[cod]
 
 docker-compose.develop.yml
 docker-compose.override.yml

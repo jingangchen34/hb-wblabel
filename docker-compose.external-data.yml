@@ -1,0 +1,8 @@
+services:
+  nginx:
+    volumes:
+      - ${EXTERNAL_DATA_ROOT:?set EXTERNAL_DATA_ROOT to your external dataset root}:/external-data:ro
+
+  backend:
+    volumes:
+      - ${EXTERNAL_DATA_ROOT:?set EXTERNAL_DATA_ROOT to your external dataset root}:/external-data:ro

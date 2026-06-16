@@ -15,6 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -28,6 +30,9 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 public class FileUseCase {
+
+    private static final String EXTERNAL_DATA_BUCKET = "external-data";
+    private static final String EXTERNAL_DATA_URL_PREFIX = "/external-data/";
 
     @Autowired
     private FileDAO fileDAO;
@@ -82,6 +87,12 @@ public class FileUseCase {
 
 
     private void setUrl(FileBO fileBO) {
+        if (EXTERNAL_DATA_BUCKET.equals(fileBO.getBucketName())) {
+            var url = EXTERNAL_DATA_URL_PREFIX + encodePath(fileBO.getPath());
+            fileBO.setInternalUrl(url);
+            fileBO.setUrl(url);
+            return;
+        }
         try {
             fileBO.setInternalUrl(minioService.getInternalUrl(fileBO.getBucketName(), fileBO.getPath()));
             fileBO.setUrl(minioService.getUrl(fileBO.getBucketName(), fileBO.getPath()));
@@ -89,6 +100,16 @@ public class FileUseCase {
             log.error("Get url error", e);
             throw new UsecaseException("Get url error");
         }
+    }
+
+    private String encodePath(String path) {
+        if (path == null) {
+            return "";
+        }
+        return java.util.Arrays.stream(path.replace("\\", "/").split("/"))
+                .filter(part -> !part.isBlank())
+                .map(part -> URLEncoder.encode(part, StandardCharsets.UTF_8).replace("+", "%20"))
+                .collect(Collectors.joining("/"));
     }
 
     /**
