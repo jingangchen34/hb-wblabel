@@ -174,8 +174,18 @@ def dir_node(name: str, children: list[str]) -> str:
     return f"JSON_OBJECT('name', {sql_json_str(name)}, 'type', 'directory', 'files', JSON_ARRAY({', '.join(children)}))"
 
 
+def clip_parent_dataset_name(clip_dir: Path, root: Path) -> str:
+    try:
+        parent = clip_dir.parent.resolve().relative_to(root.resolve())
+        parent_name = parent.as_posix()
+        return parent_name if parent_name and parent_name != "." else clip_dir.parent.name
+    except ValueError:
+        return clip_dir.parent.name
+
+
 def make_clip_display_name(clip_dir: Path, root: Path, dataset_name: str | None = None) -> str:
-    if dataset_name and args_safe_name(clip_dir.parent.name) == args_safe_name(dataset_name):
+    parent_names = {args_safe_name(clip_dir.parent.name), args_safe_name(clip_parent_dataset_name(clip_dir, root))}
+    if dataset_name and args_safe_name(dataset_name) in parent_names:
         return clip_dir.name
     return rel_posix(clip_dir, root)
 
@@ -186,7 +196,7 @@ def args_safe_name(name: str | None) -> str:
 
 def dataset_name_for_clip(clip_dir: Path, root: Path, args: argparse.Namespace) -> str:
     if args.dataset_from == "clip-parent":
-        return clip_dir.parent.name
+        return clip_parent_dataset_name(clip_dir, root)
     if args.dataset_from == "root-child":
         try:
             return clip_dir.resolve().relative_to(root.resolve()).parts[0]
@@ -608,7 +618,7 @@ def main() -> None:
         "--dataset-from",
         choices=("fixed", "clip-parent", "root-child"),
         default="fixed",
-        help="How to assign clips to datasets: fixed uses --dataset-name, clip-parent uses each clip directory's parent, root-child uses the first path segment under --root",
+        help="How to assign clips to datasets: fixed uses --dataset-name, clip-parent uses the clip parent path relative to --root, root-child uses the first path segment under --root",
     )
     parser.add_argument("--output", default="external_occ_import.sql", help="Output SQL path")
     parser.add_argument("--bucket-name", default="external-data", help="Logical bucket name recognized by backend")

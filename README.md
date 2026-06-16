@@ -113,11 +113,17 @@ Example source layout:
 ```text
 /home/user/cjg/conch_data/fusiondet_data/7cam_data/
   chizhou/
-    2025-10-24-10-26/
-      pose.json
-      anno/obstacle_3d.json
-      lidars/...
-      cameras/...
+    cz_quliuc/
+      2025-10-24-10-26/
+        pose.json
+        anno/obstacle_3d.json
+        lidars/...
+        cameras/...
+      2025-10-24-10-31/
+        pose.json
+        anno/obstacle_3d.json
+        lidars/...
+        cameras/...
 ```
 
 Start services with the external data override:
@@ -127,7 +133,7 @@ export EXTERNAL_DATA_ROOT=/home/user/cjg/conch_data/fusiondet_data/7cam_data
 docker compose -f docker-compose.yml -f docker-compose.external-data.yml up -d --build
 ```
 
-Generate the import SQL. This scans every clip under the root that contains `pose.json`, `obstacle_3d.json`, and `lidars/*.bin`. Scene names are created from the path relative to the root, for example `chizhou/2025-10-24-10-26`.
+Generate the import SQL. This scans every clip under the root that contains `pose.json`, `obstacle_3d.json`, and `lidars/*.bin`. With `--dataset-from clip-parent`, clips are grouped by their parent directory path relative to the root. For example, `/home/user/cjg/conch_data/fusiondet_data/7cam_data/chizhou/cz_quliuc/2025-10-24-10-26` is imported as dataset `chizhou/cz_quliuc` and scene `2025-10-24-10-26`.
 
 ```bash
 python3 scripts/import_external_occ_clips.py \
@@ -142,7 +148,7 @@ Import the generated SQL into the running MySQL container:
 docker compose exec -T mysql mysql -uxtreme1 -pRc4K3L6f xtreme1 < /tmp/external_occ_import.sql
 ```
 
-With `--dataset-from clip-parent`, each clip is placed in a dataset named after the clip directory's parent. For example, `/home/user/cjg/conch_data/fusiondet_data/7cam_data/chizhou/cz_quliuc/2025-10-24-10-26` is imported as dataset `cz_quliuc` and scene `2025-10-24-10-26`. After import, open `http://<server-ip>:8190`, find the generated dataset, and open its scenes.
+After import, open `http://<server-ip>:8190`, find the generated dataset, and open its scenes. If you previously imported the same files with an older grouping rule, delete the old imported dataset or import into a clean database before reimporting, otherwise both old and new datasets may appear in the UI.
 
 What the importer writes:
 
