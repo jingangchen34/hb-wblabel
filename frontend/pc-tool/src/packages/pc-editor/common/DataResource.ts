@@ -130,7 +130,7 @@ export class ResourceLoader {
 
 export default class DataResource {
     loadMax: number = 500;
-    loadMode: LoadMode = 'current';
+    loadMode: LoadMode;
     editor: Editor;
     dataMap: Record<string, IDataResource> = {};
     loaders: ResourceLoader[] = [];
@@ -138,6 +138,7 @@ export default class DataResource {
     labelBinLoader: LabelBinLoader = new LabelBinLoader();
     constructor(editor: Editor) {
         this.editor = editor;
+        this.loadMode = editor.state.config.autoLoad ? 'all' : 'near_2';
     }
 
     clear() {
@@ -302,6 +303,15 @@ export default class DataResource {
         this.loaders.forEach((e) => {
             hasLoader[e.data.id] = true;
         });
+
+        if (this.loadMode === 'all') {
+            for (let offset = 0; offset < frames.length; offset++) {
+                const index = (fromIndex + offset) % frames.length;
+                const data = frames[index];
+                if (data.loadState === '' && !hasLoader[data.id]) return data;
+            }
+            return null;
+        }
 
         let nextDataIndex = -1;
         let maxWeight = -1;

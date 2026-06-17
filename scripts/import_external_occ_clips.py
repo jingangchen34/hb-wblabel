@@ -23,6 +23,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 POINT_EXTS = {".bin", ".pcd"}
 POINT_CACHE_EXTS = {".xyzl"}
 LABEL_EXTS = {".label"}
+THUMBNAIL_SUFFIXES = ("_large", "_medium", "_small")
 SKIP_DIR_NAMES = {
     ".git",
     "__pycache__",
@@ -128,6 +129,10 @@ def find_matching_file(files: Iterable[Path], lidar: Path, frame_idx: int, frame
     return None
 
 
+def is_generated_thumbnail(path: Path) -> bool:
+    return any(path.stem.endswith(suffix) for suffix in THUMBNAIL_SUFFIXES)
+
+
 def find_camera_dirs(clip_dir: Path) -> list[Path]:
     dirs: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(clip_dir):
@@ -137,6 +142,122 @@ def find_camera_dirs(clip_dir: Path) -> list[Path]:
         if any(Path(name).suffix.lower() in IMAGE_EXTS for name in filenames):
             dirs.append(current)
     return sorted(dirs)
+
+
+def find_occ_camera_dirs(clip_dir: Path) -> list[Path]:
+    dirs: list[Path] = []
+    for root_name in ("cameras", "cameras_cylindrical"):
+        camera_root = clip_dir / root_name
+        if not camera_root.is_dir():
+            continue
+        dirs.extend(sorted(p for p in camera_root.iterdir() if p.is_dir()))
+    return dirs or find_camera_dirs(clip_dir)
+
+
+def camera_image_by_index(camera_dir: Path, frame_idx: int) -> Path | None:
+    images = sorted(
+        p for p in camera_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTS and not is_generated_thumbnail(p)
+    )
+    if 0 <= frame_idx < len(images):
+        return images[frame_idx]
+    return None
+
+
+def resolve_clip_relative_file(clip_dir: Path, relative_path: object) -> Path | None:
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        return None
+    normalized = relative_path.replace("\\", "/").lstrip("/")
+    path = clip_dir / normalized
+    return path if path.is_file() else None
+
+
+def find_obstacle_frame_entry(root: object, data_name: str) -> dict | None:
+    token = extract_frame_token(data_name)
+
+    def walk(node: object) -> dict | None:
+        if isinstance(node, list):
+            for item in node:
+                result = walk(item)
+                if result is not None:
+                    return result
+            return None
+        if not isinstance(node, dict):
+            return None
+
+        direct = get_frame_value(node, data_name, token)
+        if isinstance(direct, dict) and ("cam_files" in direct or "filepath" in direct):
+            return direct
+
+        filepath = str(node.get("filepath", ""))
+        if ("cam_files" in node and matches_frame(node, data_name, token)) or (token and token in filepath):
+            return node
+
+        for value in node.values():
+            result = walk(value)
+            if result is not None:
+                return result
+        return None
+
+    return walk(root)
+
+
+def obstacle_camera_images(clip_dir: Path, obstacle_root: object | None, data_name: str) -> list[Path]:
+    frame_entry = find_obstacle_frame_entry(obstacle_root, data_name) if obstacle_root is not None else None
+    if not isinstance(frame_entry, dict):
+        return []
+    cam_files = frame_entry.get("cam_files")
+    if not isinstance(cam_files, dict):
+        return []
+
+    images: list[Path] = []
+    seen: set[str] = set()
+    for camera_name in sorted(cam_files):
+        config = cam_files.get(camera_name)
+        if not isinstance(config, dict):
+            continue
+        for key in ("cam_file", "cylindrical_cam_file"):
+            image = resolve_clip_relative_file(clip_dir, config.get(key))
+            if image is None:
+                continue
+            image_key = image.resolve().as_posix()
+            if image_key in seen:
+                continue
+            seen.add(image_key)
+            images.append(image)
+    return images
+
+
+def collect_obstacle_frame_entries(node: object, output: list[dict]) -> None:
+    if isinstance(node, list):
+        for item in node:
+            collect_obstacle_frame_entries(item, output)
+        return
+    if not isinstance(node, dict):
+        return
+    if isinstance(node.get("filepath"), str):
+        output.append(node)
+        return
+    for value in node.values():
+        collect_obstacle_frame_entries(value, output)
+
+
+def obstacle_frame_sources(clip_dir: Path, obstacle_root: object | None) -> list[tuple[Path, dict | None]]:
+    entries: list[dict] = []
+    if obstacle_root is not None:
+        collect_obstacle_frame_entries(obstacle_root, entries)
+    sources: list[tuple[Path, dict | None]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        lidar = resolve_clip_relative_file(clip_dir, entry.get("filepath"))
+        if lidar is None or lidar.suffix.lower() not in POINT_EXTS:
+            continue
+        key = lidar.resolve().as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append((lidar, entry))
+    return sources
 
 
 def find_clip_dirs(root: Path) -> list[Path]:
@@ -252,7 +373,10 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
         obstacle = find_obstacle_file(clip_dir)
         obstacle_root = read_json_file(obstacle) if obstacle else None
         lidar_bins = find_lidar_bins(clip_dir)
-        camera_dirs = find_camera_dirs(clip_dir)
+        frame_sources = obstacle_frame_sources(clip_dir, obstacle_root)
+        if not frame_sources:
+            frame_sources = [(lidar, None) for lidar in lidar_bins]
+        camera_dirs = find_occ_camera_dirs(clip_dir)
 
         lines.extend([
             f"-- Scene: {clip_name}",
@@ -263,7 +387,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
             "",
         ])
 
-        for frame_idx, lidar in enumerate(lidar_bins):
+        for frame_idx, (lidar, frame_entry) in enumerate(frame_sources):
             frame_total += 1
             frame_name = lidar.stem
             content_nodes: list[str] = []
@@ -277,7 +401,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
                 [p for p in cache_dir.rglob("*") if p.is_file() and p.suffix.lower() in POINT_CACHE_EXTS] if cache_dir.is_dir() else [],
                 lidar,
                 frame_idx,
-                len(lidar_bins),
+                len(frame_sources),
             )
             if cache:
                 cache_var = vargen.file()
@@ -288,22 +412,20 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
                 [p for p in clip_dir.rglob("*") if p.is_file() and p.suffix.lower() in LABEL_EXTS],
                 lidar,
                 frame_idx,
-                len(lidar_bins),
+                len(frame_sources),
             )
             if label:
                 label_var = vargen.file()
                 lines.extend(insert_file_sql(label, root, args.bucket_name, args.user_id, label_var))
                 content_nodes.append(dir_node("occ_label", [file_node(label.name, label_var)]))
 
-            for camera_idx, camera_dir in enumerate(camera_dirs):
-                image = find_matching_file(
-                    [p for p in camera_dir.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS],
-                    lidar,
-                    frame_idx,
-                    len(lidar_bins),
-                )
-                if not image:
-                    continue
+            camera_images = obstacle_camera_images(clip_dir, frame_entry or obstacle_root, frame_name)
+            if not camera_images:
+                camera_images = [
+                    image for camera_dir in camera_dirs
+                    if (image := camera_image_by_index(camera_dir, frame_idx)) is not None
+                ]
+            for camera_idx, image in enumerate(camera_images):
                 image_var = vargen.file()
                 lines.extend(insert_file_sql(image, root, args.bucket_name, args.user_id, image_var))
                 content_nodes.append(dir_node(f"image_{camera_idx}", [file_node(image.name, image_var)]))

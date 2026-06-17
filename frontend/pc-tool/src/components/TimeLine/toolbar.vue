@@ -316,7 +316,7 @@
                 changeFrameIndex('Next');
                 break;
             case 'Play':
-                play();
+                void play();
                 break;
             case 'Stop':
                 editor.playManager.stop();
@@ -339,11 +339,20 @@
         play();
     }
 
-    function play() {
+    async function play() {
         const { frames, frameIndex } = editor.state;
         const pState = props.state;
         const nextData = frames[frameIndex + 1];
-        if (!nextData || nextData.loadState !== 'complete') {
+        if (!nextData) {
+            editor.showMsg('warning', editor.lang('noPlayData'));
+            return;
+        }
+        if (nextData.loadState !== 'complete') {
+            editor.dataResource.setLoadMode(editor.state.config.autoLoad ? 'all' : 'near_2');
+            const resource = editor.dataResource.getResource(nextData) as any;
+            if (resource?.get) await resource.get().catch(() => null);
+        }
+        if (nextData.loadState !== 'complete') {
             editor.showMsg('warning', editor.lang('noPlayData'));
             return;
         }

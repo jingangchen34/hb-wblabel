@@ -479,7 +479,7 @@ public class UploadDataUseCase {
             uploadUseCase.updateUploadRecordStatus(dataInfoUploadBO.getUploadRecordId(), FAILED, COMPRESSED_FILE_ERROR.getMessage());
             return;
         }
-        var totalDataNum = sceneFileList.stream().filter(Objects::nonNull).mapToLong(file -> getDataNamesFunction.apply(file).size()).sum();
+        var totalDataNum = sceneFileList.stream().filter(Objects::nonNull).mapToLong(file -> getSceneDataNames(file, getDataNamesFunction).size()).sum();
         AtomicReference<Long> parsedDataNum = new AtomicReference<>(0L);
         var uploadRecordBOBuilder = UploadRecordBO.builder()
                 .id(dataInfoUploadBO.getUploadRecordId()).totalDataNum(totalDataNum).parsedDataNum(parsedDataNum.get()).status(PARSING);
@@ -506,7 +506,7 @@ public class UploadDataUseCase {
                 return;
             }
 
-            var dataNameList = getDataNamesFunction.apply(sceneFile);
+            var dataNameList = getSceneDataNames(sceneFile, getDataNamesFunction);
             if (CollectionUtil.isEmpty(dataNameList)) {
                 log.error("The file in {} folder is empty", sceneFile);
                 errorBuilder.append("The file in ").append(sceneFile.getName()).append(" folder is empty;");
@@ -630,6 +630,60 @@ public class UploadDataUseCase {
         return files != null && Arrays.stream(files).anyMatch(f -> f.isDirectory() && "lidars".equalsIgnoreCase(f.getName()));
     }
 
+    private List<String> getSceneDataNames(File sceneFile, Function<File, List<String>> getDataNamesFunction) {
+        if (isOccClipLayout(sceneFile)) {
+            var names = getOccClipDataNames(sceneFile);
+            if (CollectionUtil.isNotEmpty(names)) {
+                return names;
+            }
+        }
+        return getDataNamesFunction.apply(sceneFile);
+    }
+
+    private List<String> getOccClipDataNames(File sceneFile) {
+        var obstacleFile = findOccClipObstacleFile(sceneFile);
+        if (ObjectUtil.isNull(obstacleFile) || !obstacleFile.exists() || !obstacleFile.isFile()) {
+            return ListUtil.empty();
+        }
+        try {
+            var root = JSONUtil.readJSON(obstacleFile, StandardCharsets.UTF_8);
+            var frameEntries = new ArrayList<JSONObject>();
+            collectObstacleFrameEntries(root, frameEntries);
+            var names = new ArrayList<String>();
+            var seen = new HashSet<String>();
+            frameEntries.forEach(entry -> {
+                var lidar = resolveOccClipRelativeFile(sceneFile, entry, "filepath");
+                if (ObjectUtil.isNull(lidar)) {
+                    return;
+                }
+                var name = getFilename(lidar);
+                if (seen.add(name)) {
+                    names.add(name);
+                }
+            });
+            return names;
+        } catch (Exception e) {
+            log.warn("Get obstacle data names failed,file:{}", obstacleFile.getAbsolutePath(), e);
+            return ListUtil.empty();
+        }
+    }
+
+    private void collectObstacleFrameEntries(Object node, List<JSONObject> frameEntries) {
+        if (node instanceof JSONArray) {
+            ((JSONArray) node).forEach(item -> collectObstacleFrameEntries(item, frameEntries));
+            return;
+        }
+        if (!(node instanceof JSONObject)) {
+            return;
+        }
+        var json = (JSONObject) node;
+        if (StrUtil.isNotBlank(json.getStr("filepath"))) {
+            frameEntries.add(json);
+            return;
+        }
+        json.keySet().forEach(key -> collectObstacleFrameEntries(json.get(key), frameEntries));
+    }
+
     private List<File> getOccClipSingleDataFiles(File sceneFile, String dataName) {
         var singleDataFile = new ArrayList<File>();
         var lidarBins = getOccClipLidarBins(sceneFile);
@@ -641,17 +695,26 @@ public class UploadDataUseCase {
             }
         }
 
-        FileUtil.loopFiles(sceneFile, 5, null).stream()
-                .filter(f -> validateFileFormat(f, DatasetTypeEnum.LIDAR_FUSION))
-                .filter(f -> isSameOccClipFrame(f, dataName))
-                .forEach(singleDataFile::add);
+        var obstacleFile = findOccClipObstacleFile(sceneFile);
+        var frameEntry = findOccClipObstacleFrameEntry(obstacleFile, dataName);
+        var lidarFile = resolveOccClipRelativeFile(sceneFile, frameEntry, "filepath");
+        if (ObjectUtil.isNotNull(lidarFile)) {
+            singleDataFile.add(lidarFile);
+        } else {
+            FileUtil.loopFiles(sceneFile, 5, null).stream()
+                    .filter(f -> validateFileFormat(f, DatasetTypeEnum.LIDAR_FUSION))
+                    .filter(f -> isSameOccClipFrame(f, dataName))
+                    .forEach(singleDataFile::add);
+        }
 
         var pointCache = createOccPointCacheFile(sceneFile, dataName, lidarBins, frameIndex);
         if (ObjectUtil.isNotNull(pointCache)) {
             singleDataFile.add(pointCache);
         }
 
-        addOccClipCameraByIndex(sceneFile, frameIndex, singleDataFile);
+        if (!addOccClipCameraByObstacle(sceneFile, frameEntry, singleDataFile)) {
+            addOccClipCameraByIndex(sceneFile, frameIndex, singleDataFile);
+        }
         addOccClipSceneMeta(sceneFile, singleDataFile);
         return singleDataFile.stream().distinct().collect(Collectors.toList());
     }
@@ -801,6 +864,101 @@ public class UploadDataUseCase {
         }
         addOccClipCameraRootByIndex(FileUtil.file(sceneFile, "cameras"), frameIndex, singleDataFile);
         addOccClipCameraRootByIndex(FileUtil.file(sceneFile, "cameras_cylindrical"), frameIndex, singleDataFile);
+    }
+
+    private JSONObject findOccClipObstacleFrameEntry(File obstacleFile, String dataName) {
+        if (ObjectUtil.isNull(obstacleFile) || !obstacleFile.exists() || !obstacleFile.isFile()) {
+            return null;
+        }
+        try {
+            var root = JSONUtil.readJSON(obstacleFile, StandardCharsets.UTF_8);
+            return findObstacleFrameEntry(root, dataName, extractFrameToken(dataName));
+        } catch (Exception e) {
+            log.warn("Find obstacle frame entry failed,dataName:{},file:{}", dataName, obstacleFile.getAbsolutePath(), e);
+            return null;
+        }
+    }
+
+    private JSONObject findObstacleFrameEntry(Object node, String dataName, String frameToken) {
+        if (node instanceof JSONArray) {
+            var array = (JSONArray) node;
+            for (Object item : array) {
+                var result = findObstacleFrameEntry(item, dataName, frameToken);
+                if (ObjectUtil.isNotNull(result)) {
+                    return result;
+                }
+            }
+            return null;
+        }
+        if (!(node instanceof JSONObject)) {
+            return null;
+        }
+        var json = (JSONObject) node;
+        var direct = getFrameValue(json, dataName, frameToken);
+        if (direct instanceof JSONObject) {
+            var directJson = (JSONObject) direct;
+            if (ObjectUtil.isNotNull(directJson.get("filepath")) || ObjectUtil.isNotNull(directJson.get("cam_files"))) {
+                return directJson;
+            }
+        }
+        var filepath = json.getStr("filepath");
+        if (StrUtil.isNotBlank(filepath) && (filepath.contains(dataName) || StrUtil.isNotBlank(frameToken) && filepath.contains(frameToken))) {
+            return json;
+        }
+        if (ObjectUtil.isNotNull(json.get("cam_files")) && matchesFrame(json, dataName, frameToken)) {
+            return json;
+        }
+        for (var key : json.keySet()) {
+            var result = findObstacleFrameEntry(json.get(key), dataName, frameToken);
+            if (ObjectUtil.isNotNull(result)) {
+                return result;
+            }
+        }
+        return null;
+    }
+
+    private File resolveOccClipRelativeFile(File sceneFile, JSONObject frameEntry, String key) {
+        if (ObjectUtil.isNull(frameEntry)) {
+            return null;
+        }
+        return resolveOccClipRelativeFile(sceneFile, frameEntry.getStr(key));
+    }
+
+    private File resolveOccClipRelativeFile(File sceneFile, String relativePath) {
+        if (StrUtil.isBlank(relativePath)) {
+            return null;
+        }
+        var normalized = relativePath.replace("\\", "/");
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        var file = FileUtil.file(sceneFile, normalized);
+        return file.exists() && file.isFile() ? file : null;
+    }
+
+    private boolean addOccClipCameraByObstacle(File sceneFile, JSONObject frameEntry, List<File> singleDataFile) {
+        if (ObjectUtil.isNull(frameEntry)) {
+            return false;
+        }
+        var camFiles = frameEntry.getJSONObject("cam_files");
+        if (ObjectUtil.isNull(camFiles) || camFiles.isEmpty()) {
+            return false;
+        }
+        var added = false;
+        for (var cameraName : camFiles.keySet().stream().sorted().collect(Collectors.toList())) {
+            var config = camFiles.getJSONObject(cameraName);
+            if (ObjectUtil.isNull(config)) {
+                continue;
+            }
+            for (var key : List.of("cam_file", "cylindrical_cam_file")) {
+                var image = resolveOccClipRelativeFile(sceneFile, config.getStr(key));
+                if (ObjectUtil.isNotNull(image)) {
+                    singleDataFile.add(image);
+                    added = true;
+                }
+            }
+        }
+        return added;
     }
 
     private void addOccClipCameraRootByIndex(File cameraRoot, int frameIndex, List<File> singleDataFile) {
