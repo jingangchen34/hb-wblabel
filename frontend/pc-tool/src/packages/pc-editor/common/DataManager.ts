@@ -484,6 +484,7 @@ export default class DataManager {
             // editor.showMsg('warning', props.state.$$('warnEmptyTarget'));
             return;
         }
+        await this.loadMissingFrameObjects(ids);
 
         let objects = getObjects();
         if (objects.length === 0) {
@@ -497,6 +498,40 @@ export default class DataManager {
             this.gotoNext(ids[0]);
         } else {
             // await this.modelTrack(ids, objects, option.direction);
+        }
+    }
+    async loadMissingFrameObjects(frameIds: string[]) {
+        const editor = this.editor;
+        const { frames, classifications, isSeriesFrame } = editor.state;
+        const targetFrames = frameIds
+            .map((id) => frames.find((frame) => frame.id === id))
+            .filter((frame): frame is IFrame => !!frame && !this.getFrameObject(frame.id));
+
+        if (targetFrames.length === 0) return;
+
+        try {
+            const data = await editor.businessManager.getFrameObject(targetFrames);
+            if (isSeriesFrame) editor.loadManager.setTrackData(data.objectsMap);
+
+            targetFrames.forEach((frame) => {
+                frame.queryTime = data.queryTime;
+                frame.classifications = utils.copyClassification(
+                    classifications,
+                    data.classificationMap[frame.id] || {},
+                );
+
+                const objects = data.objectsMap[frame.id] || [];
+                const annotates = utils.convertObject2Annotate(objects, editor);
+                annotates.forEach((obj) => {
+                    const userData = obj.userData as IUserData;
+                    if (!userData.id) userData.id = THREE.MathUtils.generateUUID();
+                });
+                if (isSeriesFrame) editor.trackManager.addTrackCount(annotates, frame);
+                this.setFrameObject(frame.id, annotates);
+            });
+        } catch (error: any) {
+            editor.handleErr(error, editor.lang('load-object-error'));
+            throw error;
         }
     }
     gotoNext(dataId: string) {

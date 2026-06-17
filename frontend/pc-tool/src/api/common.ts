@@ -242,6 +242,22 @@ export async function getDataName(dataId: string) {
     return data?.name || '';
 }
 
+export interface ISceneAttribute {
+    datasetId: string;
+    dataId: string;
+    category?: string;
+    subType?: string;
+}
+
+export async function getSceneAttribute(dataId: string) {
+    const res = await get(`/api/data/sceneAttribute`, { dataId });
+    return (res.data || {}) as ISceneAttribute;
+}
+
+export async function saveSceneAttribute(attribute: ISceneAttribute) {
+    await post(`/api/data/sceneAttribute`, attribute);
+}
+
 function buildFrameInfo(dataId: string, datasetId: string): IFrame {
     return {
         id: dataId,

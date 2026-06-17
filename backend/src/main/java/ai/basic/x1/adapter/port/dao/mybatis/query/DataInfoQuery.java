@@ -39,4 +39,8 @@ public class DataInfoQuery {
      */
     private BigDecimal maxDataConfidence;
 
+    private String sceneAttributeCategory;
+
+    private String sceneAttributeSubType;
+
 }

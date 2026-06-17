@@ -183,13 +183,18 @@ export function isBoxInImage(object: Box, view: Image2DRenderView) {
     for (let i = 0; i < positions.length; i++) {
         let pos = positions[i];
         pos.applyMatrix4(object.matrixWorld);
-        view.worldToImg(pos);
+        const useCameraDepth = view.option.projectionType !== 'fisheye';
+        if (useCameraDepth) {
+            view.projectWorldToImg(pos);
+        } else {
+            view.worldToImg(pos);
+        }
         if (
             pos.x > offset &&
             pos.x < view.imgSize.x &&
             pos.y > offset &&
             pos.y < view.imgSize.y &&
-            Math.abs(pos.z) < 1
+            (useCameraDepth ? pos.z > 0 : Math.abs(pos.z) < 1)
         ) {
             return true;
         }

@@ -100,4 +100,8 @@ public class DataInfoQueryDTO {
      */
     private List<Long> selectModelRunIds;
 
+    private String sceneAttributeCategory;
+
+    private String sceneAttributeSubType;
+
 }

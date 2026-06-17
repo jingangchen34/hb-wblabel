@@ -73,6 +73,9 @@ public class DataInfoController extends BaseDatasetController {
     @Autowired
     protected UploadDataUseCase uploadDataUseCase;
 
+    @Autowired
+    protected DataSceneAttributeUseCase dataSceneAttributeUseCase;
+
     @PostMapping("upload")
     public String upload(@RequestBody @Validated DataInfoUploadDTO dto, @LoggedUser LoggedUserDTO userDTO) throws IOException {
         var dataInfoUploadBO = DefaultConverter.convert(dto, DataInfoUploadBO.class);
@@ -103,6 +106,16 @@ public class DataInfoController extends BaseDatasetController {
     public DataInfoDTO info(@PathVariable Long id) {
         var dataInfoBO = dataInfoUsecase.findById(id);
         return convertDataInfoDTO(dataInfoBO);
+    }
+
+    @GetMapping("sceneAttribute")
+    public DataSceneAttributeDTO getSceneAttribute(@NotNull(message = "dataId cannot be null") @RequestParam(required = false) Long dataId) {
+        return DefaultConverter.convert(dataSceneAttributeUseCase.findByDataId(dataId), DataSceneAttributeDTO.class);
+    }
+
+    @PostMapping("sceneAttribute")
+    public void saveSceneAttribute(@RequestBody @Validated DataSceneAttributeDTO dto, @LoggedUser LoggedUserDTO userDTO) {
+        dataSceneAttributeUseCase.save(DefaultConverter.convert(dto, DataSceneAttributeBO.class), userDTO.getId());
     }
 
     @GetMapping("listByIds")

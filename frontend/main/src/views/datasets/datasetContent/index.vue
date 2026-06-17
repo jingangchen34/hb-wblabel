@@ -258,6 +258,15 @@
                 </Radio>
               </Radio.Group>
             </CollContainer>
+
+            <CollContainer icon="mdi:tag-outline" title="Scene Attribute">
+              <Cascader
+                v-model:value="sceneAttributePath"
+                :options="sceneAttributeOptions"
+                allow-clear
+                placeholder="All"
+              />
+            </CollContainer>
           </div>
 
           <div class="filter" v-if="sortWithLabel !== 'Data'">
@@ -456,6 +465,35 @@
   const canload = ref(true);
   let runRecordIdDisplay = ref();
   const splitType = ref<any>();
+  const sceneAttributePath = ref<string[]>([]);
+  const sceneAttributeOptions = [
+    {
+      value: 'noise',
+      label: 'noise',
+      children: [
+        { value: 'dust', label: '灰尘' },
+        { value: 'splash', label: '水花' },
+        { value: 'sprinkler', label: '对象洒水车' },
+      ],
+    },
+    {
+      value: 'stationary',
+      label: 'stationary',
+      children: [
+        { value: 'discharge_guardrail', label: '卸料口护栏' },
+        { value: 'fence', label: '围栏' },
+      ],
+    },
+    {
+      value: 'unfree',
+      label: 'unfree',
+      children: [
+        { value: 'retaining_wall', label: '挡墙' },
+        { value: 'discharge_port', label: '卸料口' },
+        { value: 'shoveling', label: '铲装' },
+      ],
+    },
+  ];
 
   const selectName = t('business.models.models');
   const title = t('business.models.run.runModel');
@@ -489,6 +527,7 @@
     createEndTime: end,
     annotationStatus: annotationStatus,
     splitType: splitType,
+    sceneAttributePath: sceneAttributePath,
     confidenceSlider: confidenceSlider,
     runRecordId: runRecordId,
   });
@@ -582,6 +621,7 @@
     filterForm.createEndTime = null;
     filterForm.annotationStatus = undefined;
     filterForm.splitType = undefined;
+    filterForm.sceneAttributePath = [];
     filterForm.runRecordId = undefined;
     filterForm.confidenceSlider = [0, 1];
   };
@@ -615,6 +655,11 @@
           : undefined,
     };
     delete params.confidenceSlider;
+    if (filter.sceneAttributePath?.length) {
+      params.sceneAttributeCategory = filter.sceneAttributePath[0];
+      params.sceneAttributeSubType = filter.sceneAttributePath[1];
+    }
+    delete params.sceneAttributePath;
 
     if (params.runRecordId && params.runRecordId.length) {
       params.runRecordId = params.runRecordId[1];

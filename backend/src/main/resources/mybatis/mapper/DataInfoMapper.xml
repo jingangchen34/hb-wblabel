@@ -15,6 +15,8 @@
         <result column="status" property="status"/>
         <result column="annotation_status" property="annotationStatus"/>
         <result column="split_type" property="splitType"/>
+        <result column="scene_attribute_category" property="sceneAttributeCategory"/>
+        <result column="scene_attribute_sub_type" property="sceneAttributeSubType"/>
         <result column="is_deleted" property="isDeleted"/>
         <result column="del_unique_key" property="delUniqueKey"/>
         <result column="created_at" property="createdAt"/>
@@ -82,12 +84,21 @@
     </select>
 
     <select id="selectDataPage" resultMap="BaseResultMap">
-        SELECT d.*
+        SELECT d.*,
+        dsa.category AS scene_attribute_category,
+        dsa.sub_type AS scene_attribute_sub_type
         <if test="dataInfoQuery.runRecordId != null">
             ,mdr.data_confidence
         </if>
         FROM data d
+        LEFT JOIN data_scene_attribute dsa ON dsa.data_id = d.id
         ${ew.customSqlSegment("d")}
+        <if test="dataInfoQuery.sceneAttributeCategory != null and dataInfoQuery.sceneAttributeCategory != ''">
+            AND dsa.category = #{dataInfoQuery.sceneAttributeCategory}
+        </if>
+        <if test="dataInfoQuery.sceneAttributeSubType != null and dataInfoQuery.sceneAttributeSubType != ''">
+            AND dsa.sub_type = #{dataInfoQuery.sceneAttributeSubType}
+        </if>
         <include refid="selectDataByPageOrder"/>
     </select>
 

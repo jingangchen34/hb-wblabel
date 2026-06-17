@@ -77,6 +77,10 @@ public class DataInfoBO {
      */
     private SplitTypeEnum splitType;
 
+    private String sceneAttributeCategory;
+
+    private String sceneAttributeSubType;
+
     /**
      * Is deleted
      */

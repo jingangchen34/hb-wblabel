@@ -78,6 +78,10 @@ public class DataInfoDTO {
      */
     private SplitTypeEnum splitType;
 
+    private String sceneAttributeCategory;
+
+    private String sceneAttributeSubType;
+
     /**
      * Locked Person's Name
      */

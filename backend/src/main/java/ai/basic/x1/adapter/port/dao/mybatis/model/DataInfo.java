@@ -77,6 +77,12 @@ public class DataInfo implements Serializable {
      */
     private SplitTypeEnum splitType;
 
+    @TableField(exist = false)
+    private String sceneAttributeCategory;
+
+    @TableField(exist = false)
+    private String sceneAttributeSubType;
+
     /**
      * Is deleted
      */

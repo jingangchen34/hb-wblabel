@@ -1,6 +1,7 @@
 <template>
     <div class="pc-editor-operation">
         <OccLabel />
+        <SceneAttribute />
         <Results />
         <Classification />
         <Instance />
@@ -21,6 +22,7 @@
     import Results from './Results/index.vue';
     import Instance from '../Instance/index.vue';
     import OccLabel from './OccLabel/index.vue';
+    import SceneAttribute from './SceneAttribute/index.vue';
     // import Instance from './Instance/index.vue';
     import Classification from './Classification/index.vue';
 

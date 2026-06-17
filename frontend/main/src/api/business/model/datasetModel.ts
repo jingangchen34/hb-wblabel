@@ -154,6 +154,8 @@ export interface DatasetItem {
   lockedBy: Nullable<string>;
   datasetName?: string;
   splitType: string;
+  sceneAttributeCategory?: string;
+  sceneAttributeSubType?: string;
 }
 
 export interface DatasetListItem {

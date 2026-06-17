@@ -11,6 +11,7 @@
           >{{ translateSplit(data.splitType) }}
         </span></div
       >
+      <div v-if="sceneAttributeLabel" class="sceneAttribute">{{ sceneAttributeLabel }}</div>
       <div v-if="data.lockedBy"> <Icon icon="bx:bxs-lock" /> Editing by {{ data.lockedBy }} </div>
     </div>
     <div class="img">
@@ -256,6 +257,21 @@
     getTextJson,
   } = useImgCard(props as any);
   const dataId = unref(props).data.id;
+  const sceneAttributeLabel = computed(() => {
+    const labels = {
+      dust: '灰尘',
+      splash: '水花',
+      sprinkler: '对象洒水车',
+      discharge_guardrail: '卸料口护栏',
+      fence: '围栏',
+      retaining_wall: '挡墙',
+      discharge_port: '卸料口',
+      shoveling: '铲装',
+    };
+    const subType = props.data.sceneAttributeSubType;
+    if (!props.data.sceneAttributeCategory || !subType) return '';
+    return `${props.data.sceneAttributeCategory}/${labels[subType] || subType}`;
+  });
   // const originalUrl = unref(props).data.files ? unref(props).data.files[0].url.originalUrl : null;
   const { prefixCls } = useDesign('img-card');
   // const go = useGo();
@@ -394,6 +410,21 @@
           background: #fdb022;
           border-radius: 15px;
         }
+      }
+
+      .sceneAttribute {
+        display: inline-block;
+        height: 20px;
+        max-width: 100%;
+        line-height: 20px;
+        margin-top: 4px;
+        padding: 0 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-radius: 3px;
+        background: #243a62;
+        color: #cfe1ff;
+        font-size: 12px;
       }
     }
 

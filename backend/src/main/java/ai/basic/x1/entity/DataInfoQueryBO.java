@@ -103,4 +103,8 @@ public class DataInfoQueryBO extends BaseQueryBO {
      */
     private Long parentId;
 
+    private String sceneAttributeCategory;
+
+    private String sceneAttributeSubType;
+
 }
