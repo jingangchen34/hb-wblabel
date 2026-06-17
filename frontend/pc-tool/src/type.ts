@@ -19,8 +19,16 @@ export interface IBSState {
     datasetName: string;
     datasetType: string;
     seriesFrameId?: string;
+    seriesFrameName?: string;
+    seriesFrameList?: ISeriesFrameInfo[];
     //
     user: IUser;
+}
+
+export interface ISeriesFrameInfo {
+    id: string;
+    firstDataId?: string;
+    name: string;
 }
 
 export type IAction = 'save' | 'close';

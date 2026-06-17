@@ -20,7 +20,7 @@ const execute: IModeConfig<IBsUIType, IBsActionName> = {
 const view: IModeConfig<IBsUIType, IBsActionName> = {
     name: 'view',
     op: OPType.VIEW,
-    ui: toMap([BsUIType.setting, BsUIType.info]),
+    ui: toMap([BsUIType.setting, BsUIType.info, BsUIType.project]),
     actions: toMap<IBsActionName>([...viewActions]),
 };
 

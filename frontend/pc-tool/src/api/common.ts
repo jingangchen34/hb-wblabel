@@ -17,6 +17,12 @@ import * as THREE from 'three';
 
 let { empty, queryStr, traverseClassification2Arr, traverseClass2Arr } = utils;
 
+export interface ISeriesFrameInfo {
+    id: string;
+    firstDataId?: string;
+    name: string;
+}
+
 export async function getUrl(url: string) {
     return get(url, null, { headers: { 'x-request-type': 'resource' } });
 }
@@ -153,7 +159,8 @@ export async function getInfoByRecordId(recordId: string) {
 
     let isSeriesFrame = ['FRAME_SERIES', 'SCENE'].includes(data.itemType);
     let modelRecordId = data.serialNo || '';
-    const seriesFrameId = data.datas[0]?.sceneId;
+    const seriesFrameId = data.datas[0]?.sceneId ? data.datas[0].sceneId + '' : '';
+    const seriesFrameName = seriesFrameId ? await getDataName(seriesFrameId + '') : '';
     let model = undefined as IModelResult | undefined;
     if (modelRecordId) {
         model = {
@@ -194,21 +201,23 @@ export async function getInfoByRecordId(recordId: string) {
         data.annotationStatus = status.annotationStatus || 'NOT_ANNOTATED';
     });
 
-    return { dataInfos, isSeriesFrame, seriesFrameId };
+    return { dataInfos, isSeriesFrame, seriesFrameId, seriesFrameName };
 }
 
 async function getInfoByDataId(dataId: string) {
     const dataResp = await get(`/api/data/listByIds`, { dataIds: dataId });
     const data = (dataResp.data || [])[0];
-    if (!data) return { dataInfos: [], isSeriesFrame: false, seriesFrameId: '' };
+    if (!data) return { dataInfos: [], isSeriesFrame: false, seriesFrameId: '', seriesFrameName: '' };
 
     const datasetId = data.datasetId + '';
     const sceneId = data.parentId && data.parentId !== 0 ? data.parentId + '' : '';
+    let seriesFrameName = '';
     let dataInfos = [] as IFrame[];
     let isSeriesFrame = false;
 
     if (sceneId) {
         isSeriesFrame = true;
+        seriesFrameName = await getDataName(sceneId);
         dataInfos = await getFrameSeriesData(datasetId, sceneId);
         const currentIndex = dataInfos.findIndex((frame) => frame.id === dataId);
         if (currentIndex > 0) {
@@ -216,9 +225,21 @@ async function getInfoByDataId(dataId: string) {
         }
     } else {
         dataInfos = [buildFrameInfo(dataId, datasetId)];
+        seriesFrameName = data.name || '';
     }
 
-    return { dataInfos, isSeriesFrame, seriesFrameId: sceneId };
+    return { dataInfos, isSeriesFrame, seriesFrameId: sceneId, seriesFrameName };
+}
+
+export async function getDataInfo(dataId: string) {
+    if (!dataId) return undefined;
+    const dataResp = await get(`/api/data/listByIds`, { dataIds: dataId });
+    return (dataResp.data || [])[0];
+}
+
+export async function getDataName(dataId: string) {
+    const data = await getDataInfo(dataId);
+    return data?.name || '';
 }
 
 function buildFrameInfo(dataId: string, datasetId: string): IFrame {
@@ -352,4 +373,39 @@ export async function getFrameSeriesData(datasetId: string, frameSeriesId: strin
     });
     return dataList;
     // return configs;
+}
+
+export async function getFrameSeriesList(datasetId: string): Promise<ISeriesFrameInfo[]> {
+    const pageSize = 1000;
+    let pageNo = 1;
+    let total = Number.POSITIVE_INFINITY;
+    const list: ISeriesFrameInfo[] = [];
+
+    while ((pageNo - 1) * pageSize < total) {
+        const data = await get('/api/data/findByPage', {
+            datasetId,
+            pageNo,
+            pageSize,
+            sortField: 'NAME',
+            ascOrDesc: 'ASC',
+        });
+        const page = data.data || {};
+        const items = page.list || [];
+        total = page.total ?? items.length;
+
+        items.forEach((item: any) => {
+            if (item.type === 'SCENE') {
+                list.push({
+                    id: item.id + '',
+                    firstDataId: item.firstDataId ? item.firstDataId + '' : undefined,
+                    name: item.name || '',
+                });
+            }
+        });
+
+        if (items.length < pageSize) break;
+        pageNo += 1;
+    }
+
+    return list;
 }

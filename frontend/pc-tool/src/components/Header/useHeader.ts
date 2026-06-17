@@ -17,6 +17,17 @@ export default function useHeader() {
     let removeBoxPoints = ref(true);
     let selectedMergeCount = computed(() => ((state as any).mergeSelectedFrameIds || []).length);
     let mergeActive = computed(() => !!(state as any).mergeActive);
+    let currentSeriesIndex = computed(() => {
+        const list = bsState.seriesFrameList || [];
+        return list.findIndex((item) => item.id === bsState.seriesFrameId);
+    });
+    let hasPreSeriesFrame = computed(() => state.isSeriesFrame && currentSeriesIndex.value > 0);
+    let hasNextSeriesFrame = computed(
+        () =>
+            state.isSeriesFrame &&
+            currentSeriesIndex.value >= 0 &&
+            currentSeriesIndex.value < (bsState.seriesFrameList || []).length - 1,
+    );
     let iState = reactive({
         fullScreen: false,
         dataName: '',
@@ -27,6 +38,10 @@ export default function useHeader() {
             if (dataIndex.value !== state.frameIndex + 1) dataIndex.value = state.frameIndex + 1;
             updateName();
         },
+    );
+    watch(
+        () => bsState.seriesFrameName,
+        () => updateName(),
     );
 
     onMounted(() => {
@@ -62,8 +77,9 @@ export default function useHeader() {
     }
 
     let updateName = () => {
-        const { id } = currentFrame.value;
-        iState.dataName = editor.dataResource.dataMap[id]?.name || '';
+        const frame = currentFrame.value;
+        if (!frame) return;
+        iState.dataName = bsState.seriesFrameName || editor.dataResource.dataMap[frame.id]?.name || '';
     };
     function onSave() {
         editor.saveObject();
@@ -86,6 +102,39 @@ export default function useHeader() {
     }
     function onNext() {
         editor.loadFrame(state.frameIndex + 1);
+    }
+
+    async function onPreSeriesFrame() {
+        await jumpSeriesFrame(currentSeriesIndex.value - 1);
+    }
+
+    async function onNextSeriesFrame() {
+        await jumpSeriesFrame(currentSeriesIndex.value + 1);
+    }
+
+    async function jumpSeriesFrame(index: number) {
+        const list = bsState.seriesFrameList || [];
+        const item = list[index];
+        if (!item || blocking.value) return;
+        if (editor.needSave()) {
+            const shouldSwitch = await editor
+                .showConfirm({
+                    title: 'Save Change',
+                    subTitle: 'Do you want to save changes before switching clip?',
+                    okText: 'Save',
+                })
+                .then(async () => {
+                    await editor.saveObject();
+                    return true;
+                })
+                .catch(() => false);
+            if (!shouldSwitch) return;
+        }
+        const url = new URL(window.location.href);
+        url.searchParams.set('dataId', item.id);
+        url.searchParams.set('dataType', 'scene');
+        url.searchParams.set('type', 'readOnly');
+        window.location.href = url.toString();
     }
 
     async function onClose() {
@@ -327,6 +376,9 @@ export default function useHeader() {
         removeBoxPoints,
         selectedMergeCount,
         mergeActive,
+        currentSeriesIndex,
+        hasPreSeriesFrame,
+        hasNextSeriesFrame,
         onIndexChange,
         onFullScreen,
         onHelp,
@@ -337,6 +389,8 @@ export default function useHeader() {
         onCancelMerge,
         onPre,
         onNext,
+        onPreSeriesFrame,
+        onNextSeriesFrame,
         onClose,
         onToggleValid,
         onToggleSkip,

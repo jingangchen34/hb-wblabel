@@ -4,6 +4,7 @@ import { useInjectEditor } from '../state';
 import modes from '../config/mode';
 import useTool from '../hook/useTool';
 import { BSError } from 'pc-editor';
+import * as api from '../api';
 
 export function view(): IPageHandler {
     let editor = useInjectEditor();
@@ -50,8 +51,21 @@ export function view(): IPageHandler {
         if (['frame', 'scene'].some((e) => new RegExp(e, 'i').test(query.dataType))) {
             // 连续帧
             editor.state.isSeriesFrame = true;
-            editor.bsState.seriesFrameId = dataId;
-            await loadDataFromFrameSeries(dataId);
+            let sceneId = dataId;
+            if (new RegExp('frame', 'i').test(query.dataType)) {
+                const dataInfo = await api.getDataInfo(dataId);
+                sceneId = dataInfo?.parentId && dataInfo.parentId !== 0 ? dataInfo.parentId + '' : dataId;
+            }
+            editor.bsState.seriesFrameId = sceneId;
+            await loadDataFromFrameSeries(sceneId);
+            if (sceneId !== dataId) {
+                const selectedIndex = editor.state.frames.findIndex((frame) => frame.id === dataId);
+                if (selectedIndex > 0) {
+                    editor.state.frames = editor.state.frames
+                        .slice(selectedIndex)
+                        .concat(editor.state.frames.slice(0, selectedIndex));
+                }
+            }
         } else {
             createSingleData();
         }

@@ -41,11 +41,12 @@ export default function useTool() {
 
     async function loadRecord() {
         try {
-            let { dataInfos, isSeriesFrame, seriesFrameId } = await api.getInfoByRecordId(
+            let { dataInfos, isSeriesFrame, seriesFrameId, seriesFrameName } = await api.getInfoByRecordId(
                 bsState.recordId,
             );
             state.isSeriesFrame = isSeriesFrame;
             bsState.seriesFrameId = seriesFrameId;
+            bsState.seriesFrameName = seriesFrameName;
             let dataId = bsState.query.dataId;
             if (dataId) {
                 if (dataId === seriesFrameId && dataInfos[0]) {
@@ -75,6 +76,9 @@ export default function useTool() {
 
             editor.setFrames(dataInfos);
             bsState.datasetId = dataInfos[0].datasetId + '';
+            if (state.isSeriesFrame && bsState.datasetId) {
+                loadFrameSeriesList();
+            }
         } catch (error) {
             throw new BSError('', editor.lang('load-record-error'), error);
         }
@@ -106,12 +110,25 @@ export default function useTool() {
     async function loadDataFromFrameSeries(frameSeriesId: string) {
         try {
             const { datasetId } = editor.bsState;
+            bsState.seriesFrameId = frameSeriesId;
+            bsState.seriesFrameName = await api.getDataName(frameSeriesId);
             const frames = await api.getFrameSeriesData(datasetId, frameSeriesId);
             if (frames.length === 0) throw new BSError('', 'load scene error');
             // state.frames = frames;
             editor.setFrames(frames);
+            loadFrameSeriesList();
         } catch (error) {
             throw error instanceof BSError ? error : new BSError('', 'load scene error', error);
+        }
+    }
+
+    async function loadFrameSeriesList() {
+        try {
+            if (!bsState.datasetId) return;
+            bsState.seriesFrameList = await api.getFrameSeriesList(bsState.datasetId);
+        } catch (error) {
+            console.warn('load scene list error', error);
+            bsState.seriesFrameList = [];
         }
     }
 
@@ -123,5 +140,6 @@ export default function useTool() {
         loadRecord,
         loadDateSetClassification,
         loadDataFromFrameSeries,
+        loadFrameSeriesList,
     };
 }

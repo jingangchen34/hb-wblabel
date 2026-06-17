@@ -39,6 +39,22 @@
                 @click="state.frameIndex < state.frames.length - 1 && !blocking ? onNext() : null"
             />
         </div>
+        <div
+            class="item-wrap data-index"
+            v-if="state.isSeriesFrame && currentSeriesIndex >= 0 && (bsState.seriesFrameList || []).length > 1"
+        >
+            <LeftOutlined
+                :class="hasPreSeriesFrame && !blocking ? 'icon' : 'icon disable'"
+                @click="hasPreSeriesFrame && !blocking ? onPreSeriesFrame() : null"
+            />
+            <span class="text clip-index">
+                {{ currentSeriesIndex + 1 }}/{{ (bsState.seriesFrameList || []).length }}
+            </span>
+            <RightOutlined
+                :class="hasNextSeriesFrame && !blocking ? 'icon' : 'icon disable'"
+                @click="hasNextSeriesFrame && !blocking ? onNextSeriesFrame() : null"
+            />
+        </div>
         <div class="item-wrap">
             <!-- Save -->
             <a-button
@@ -169,6 +185,9 @@
         removeBoxPoints,
         selectedMergeCount,
         mergeActive,
+        currentSeriesIndex,
+        hasPreSeriesFrame,
+        hasNextSeriesFrame,
         onIndexChange,
         onHelp,
         onIndexBlur,
@@ -178,6 +197,8 @@
         onCancelMerge,
         onPre,
         onNext,
+        onPreSeriesFrame,
+        onNextSeriesFrame,
         onClose,
         onToggleValid,
         onToggleSkip,
@@ -269,6 +290,12 @@
             .text {
                 font-size: 18px;
                 margin-left: 4px;
+            }
+
+            .clip-index {
+                min-width: 54px;
+                text-align: center;
+                color: #bec1ca;
             }
 
             .merge-tools {
