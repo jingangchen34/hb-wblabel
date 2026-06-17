@@ -268,18 +268,21 @@ export default class LoadManager {
             };
             return resource
                 .get()
-                .then((data) => {
-                    this.setResource(data);
+                .then(async (data) => {
+                    await this.setResource(data);
                 })
                 .catch((e) => {
                     this.editor.handleErr(e, this.editor.lang('load-resource-error'));
                 });
         } else {
-            this.setResource(resource);
+            await this.setResource(resource);
         }
     }
 
-    setResource(data: IDataResource) {
+    async setResource(data: IDataResource) {
+        if (data.viewConfig.length > 0 && data.viewConfig.some((config) => !config.imgObject)) {
+            await this.editor.dataResource.loadImage(data.viewConfig, this.editor.getCurrentFrame()?.id);
+        }
         this.editor.viewManager.setImgViews(data.viewConfig);
         // if (!this.playManger.playing) this.editor.setImgViews(data.viewConfig);
         // this.editor.setPointCloudData(data.pointsData, 0);

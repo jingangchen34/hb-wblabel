@@ -146,10 +146,8 @@ def find_camera_dirs(clip_dir: Path) -> list[Path]:
 
 def find_occ_camera_dirs(clip_dir: Path) -> list[Path]:
     dirs: list[Path] = []
-    for root_name in ("cameras", "cameras_cylindrical"):
-        camera_root = clip_dir / root_name
-        if not camera_root.is_dir():
-            continue
+    camera_root = clip_dir / "cameras"
+    if camera_root.is_dir():
         dirs.extend(sorted(p for p in camera_root.iterdir() if p.is_dir()))
     return dirs or find_camera_dirs(clip_dir)
 
