@@ -230,9 +230,10 @@ export function translateCameraConfig(info: any) {
         cameraExternal = matrix.elements;
     }
 
-    const direction =
-        info.externalDirection || info.external_direction || info.cameraExternalDirection;
-    if (externalIsCameraToLidar && direction !== 'lidar_to_camera') {
+    const direction = normalizeCameraName(
+        info.externalDirection || info.external_direction || info.cameraExternalDirection,
+    );
+    if (externalIsCameraToLidar && direction === 'camera_to_lidar') {
         cameraExternal = matrixToRowMajor(
             toMatrix4(cameraExternal).invert(),
         );

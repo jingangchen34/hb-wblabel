@@ -369,6 +369,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
 
         clip_name = make_clip_display_name(clip_dir, root, dataset_name)
         scene_var = vargen.scene()
+        calib = clip_dir / "calib.json"
         pose = clip_dir / "pose.json"
         obstacle = find_obstacle_file(clip_dir)
         obstacle_root = read_json_file(obstacle) if obstacle else None
@@ -430,6 +431,11 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
                 image_var = vargen.file()
                 lines.extend(insert_file_sql(image, root, args.bucket_name, args.user_id, image_var))
                 content_nodes.append(dir_node(f"image_{camera_idx}_{camera_name}", [file_node(image.name, image_var)]))
+
+            if calib.is_file():
+                calib_var = vargen.file()
+                lines.extend(insert_file_sql(calib, root, args.bucket_name, args.user_id, calib_var))
+                content_nodes.append(dir_node("camera_config", [file_node("calib.json", calib_var)]))
 
             if pose:
                 pose_var = vargen.file()
