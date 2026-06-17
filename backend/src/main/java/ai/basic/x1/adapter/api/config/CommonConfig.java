@@ -173,6 +173,11 @@ public class CommonConfig implements WebMvcConfigurer {
     }
 
     @Bean
+    public DataSceneAttributeUseCase dataSceneAttributeUseCase() {
+        return new DataSceneAttributeUseCase();
+    }
+
+    @Bean
     public DatasetSimilarityRecordUseCase datasetSimilarityRecordUseCase() {
         return new DatasetSimilarityRecordUseCase();
     }
