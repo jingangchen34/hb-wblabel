@@ -203,7 +203,10 @@ def find_obstacle_frame_entry(root: object, data_name: str) -> dict | None:
 
 
 def obstacle_camera_images(clip_dir: Path, obstacle_root: object | None, data_name: str) -> list[tuple[str, Path]]:
-    frame_entry = find_obstacle_frame_entry(obstacle_root, data_name) if obstacle_root is not None else None
+    if isinstance(obstacle_root, dict) and isinstance(obstacle_root.get("cam_files"), dict):
+        frame_entry = obstacle_root
+    else:
+        frame_entry = find_obstacle_frame_entry(obstacle_root, data_name) if obstacle_root is not None else None
     if not isinstance(frame_entry, dict):
         return []
     cam_files = frame_entry.get("cam_files")
