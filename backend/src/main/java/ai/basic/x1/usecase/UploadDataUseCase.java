@@ -863,7 +863,6 @@ public class UploadDataUseCase {
             return;
         }
         addOccClipCameraRootByIndex(FileUtil.file(sceneFile, "cameras"), frameIndex, singleDataFile);
-        addOccClipCameraRootByIndex(FileUtil.file(sceneFile, "cameras_cylindrical"), frameIndex, singleDataFile);
     }
 
     private JSONObject findOccClipObstacleFrameEntry(File obstacleFile, String dataName) {
@@ -950,12 +949,10 @@ public class UploadDataUseCase {
             if (ObjectUtil.isNull(config)) {
                 continue;
             }
-            for (var key : List.of("cam_file", "cylindrical_cam_file")) {
-                var image = resolveOccClipRelativeFile(sceneFile, config.getStr(key));
-                if (ObjectUtil.isNotNull(image)) {
-                    singleDataFile.add(image);
-                    added = true;
-                }
+            var image = resolveOccClipRelativeFile(sceneFile, config.getStr("cam_file"));
+            if (ObjectUtil.isNotNull(image)) {
+                singleDataFile.add(image);
+                added = true;
             }
         }
         return added;
@@ -1660,9 +1657,17 @@ public class UploadDataUseCase {
             return "lidar_point_cloud_cache_0";
         }
         if (IMAGE_DATA_TYPE.contains(FileUtil.getMimeType(dataFile.getAbsolutePath()))) {
-            return "camera_image_" + Math.abs(dataFile.getParentFile().getName().hashCode());
+            return "image_" + sanitizeOccCameraName(dataFile.getParentFile().getName());
         }
         return dataFile.getParentFile().getName();
+    }
+
+    private String sanitizeOccCameraName(String cameraName) {
+        if (StrUtil.isBlank(cameraName)) {
+            return "0";
+        }
+        var normalized = cameraName.replaceAll("[^A-Za-z0-9_\\-]", "_");
+        return StrUtil.isBlank(normalized) ? "0" : normalized;
     }
 
     private List<DataInfoBO.FileNodeBO> getDirList(File node, String rootPath, List<File> files) {

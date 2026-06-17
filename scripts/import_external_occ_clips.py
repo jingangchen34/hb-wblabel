@@ -202,7 +202,7 @@ def find_obstacle_frame_entry(root: object, data_name: str) -> dict | None:
     return walk(root)
 
 
-def obstacle_camera_images(clip_dir: Path, obstacle_root: object | None, data_name: str) -> list[Path]:
+def obstacle_camera_images(clip_dir: Path, obstacle_root: object | None, data_name: str) -> list[tuple[str, Path]]:
     frame_entry = find_obstacle_frame_entry(obstacle_root, data_name) if obstacle_root is not None else None
     if not isinstance(frame_entry, dict):
         return []
@@ -210,21 +210,20 @@ def obstacle_camera_images(clip_dir: Path, obstacle_root: object | None, data_na
     if not isinstance(cam_files, dict):
         return []
 
-    images: list[Path] = []
+    images: list[tuple[str, Path]] = []
     seen: set[str] = set()
     for camera_name in sorted(cam_files):
         config = cam_files.get(camera_name)
         if not isinstance(config, dict):
             continue
-        for key in ("cam_file", "cylindrical_cam_file"):
-            image = resolve_clip_relative_file(clip_dir, config.get(key))
-            if image is None:
-                continue
-            image_key = image.resolve().as_posix()
-            if image_key in seen:
-                continue
-            seen.add(image_key)
-            images.append(image)
+        image = resolve_clip_relative_file(clip_dir, config.get("cam_file"))
+        if image is None:
+            continue
+        image_key = image.resolve().as_posix()
+        if image_key in seen:
+            continue
+        seen.add(image_key)
+        images.append((camera_name, image))
     return images
 
 
@@ -422,13 +421,14 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
             camera_images = obstacle_camera_images(clip_dir, frame_entry or obstacle_root, frame_name)
             if not camera_images:
                 camera_images = [
-                    image for camera_dir in camera_dirs
+                    (camera_dir.name, image) for camera_dir in camera_dirs
+                    if camera_dir.parent.name == "cameras"
                     if (image := camera_image_by_index(camera_dir, frame_idx)) is not None
                 ]
-            for camera_idx, image in enumerate(camera_images):
+            for camera_idx, (camera_name, image) in enumerate(camera_images):
                 image_var = vargen.file()
                 lines.extend(insert_file_sql(image, root, args.bucket_name, args.user_id, image_var))
-                content_nodes.append(dir_node(f"image_{camera_idx}", [file_node(image.name, image_var)]))
+                content_nodes.append(dir_node(f"image_{camera_idx}_{camera_name}", [file_node(image.name, image_var)]))
 
             if pose:
                 pose_var = vargen.file()
