@@ -142,6 +142,22 @@ python3 scripts/import_external_occ_clips.py \
   --output /tmp/external_occ_import.sql
 ```
 
+To import only a newly added subdirectory while keeping browser paths correct, keep `--root` at the nginx-mounted external data root and point `--scan-root` at the new data folder. For example, if the new clips are under `/home/user/cjg/conch_data/fusiondet_data/7cam_data/newclip`, run:
+
+```bash
+python3 scripts/import_external_occ_clips.py \
+  --root /home/user/cjg/conch_data/fusiondet_data/7cam_data \
+  --scan-root /home/user/cjg/conch_data/fusiondet_data/7cam_data/newclip \
+  --dataset-from fixed \
+  --dataset-name newclip \
+  --bucket-name external-data \
+  --user-id 1 \
+  --skip-obstacle-annotations \
+  --output /tmp/import-new-clip.sql
+```
+
+Do not set `--root` directly to the new subdirectory in this case. File paths in MySQL are stored relative to `--root`; using `--root .../7cam_data/newclip` would write paths such as `ks_noise/...`, but nginx serves them under `/external-data/newclip/ks_noise/...`.
+
 Import the generated SQL into the running MySQL container:
 
 ```bash
@@ -295,3 +311,4 @@ url={https://xtreme1.io/},
 author = {LF AI & Data Foundation},
 }
 ```
+
