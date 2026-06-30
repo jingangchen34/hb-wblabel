@@ -11,6 +11,8 @@ type PoseInfo = {
     quaternion: THREE.Quaternion;
 };
 
+type QuaternionOrder = 'xyzw' | 'wxyz';
+
 type MergeOptions = {
     frames: IFrame[];
     removeBoxPoints: boolean;
@@ -30,6 +32,7 @@ export default class MultiFrameMergeManager {
     private mergedGlobalData?: Record<string, any>;
     private poseRoot?: any;
     private obstacleRoot?: any;
+    private poseQuaternionOrder: QuaternionOrder = 'xyzw';
     private pointSizeBeforeMerge?: number;
     private pointColorModeBeforeMerge?: ColorModeEnum;
     annotateVisibleBeforeMerge = true;
@@ -148,6 +151,7 @@ export default class MultiFrameMergeManager {
                 metaConfig.obstacleUrl ? api.getUrl(metaConfig.obstacleUrl).catch(() => undefined) : undefined,
             ]);
 
+            this.poseQuaternionOrder = this.detectPoseQuaternionOrder(poseRoot, obstacleRoot, configs);
             this.savePointDisplayConfig();
             const mergedGlobal = this.mergePointData(frames, configs, poseRoot, obstacleRoot, options.removeBoxPoints);
             this.poseRoot = poseRoot;
@@ -485,7 +489,7 @@ export default class MultiFrameMergeManager {
         if (!node) return undefined;
         const pose = node.ego_pose || node.pose || node;
         const translation = this.parseVector(pose.translation || pose.position || pose.location || pose.xyz || pose);
-        const quaternion = this.parseQuaternion(pose.rotation || pose.quaternion || pose.orientation || pose.q || pose);
+        const quaternion = this.parseQuaternion(pose.rotation || pose.quaternion || pose.orientation || pose.q || pose, pose);
         if (!translation || !quaternion) return undefined;
         return { translation, quaternion };
     }
@@ -500,12 +504,14 @@ export default class MultiFrameMergeManager {
         return undefined;
     }
 
-    private parseQuaternion(value: any) {
+    private parseQuaternion(value: any, context?: any) {
+        if (value?.wxyz) return this.quaternionFromArray(value.wxyz, 'wxyz');
+        if (value?.xyzw) return this.quaternionFromArray(value.xyzw, 'xyzw');
         if (Array.isArray(value) && value.length >= 4) {
-            const items = value.slice(0, 4).map((item) => Number(item));
-            if (items.every((item) => Number.isFinite(item))) {
-                return new THREE.Quaternion(items[0], items[1], items[2], items[3]).normalize();
-            }
+            return this.quaternionFromArray(
+                value,
+                this.findQuaternionOrderMarker(context) || this.poseQuaternionOrder,
+            );
         }
         if (value) {
             const w = value.w ?? value.qw;
@@ -517,6 +523,67 @@ export default class MultiFrameMergeManager {
             }
         }
         return undefined;
+    }
+
+    private quaternionFromArray(value: any, order: QuaternionOrder) {
+        if (!Array.isArray(value) || value.length < 4) return undefined;
+        const items = value.slice(0, 4).map((item) => Number(item));
+        if (!items.every((item) => Number.isFinite(item))) return undefined;
+        const [a, b, c, d] = items;
+        return order === 'wxyz'
+            ? new THREE.Quaternion(b, c, d, a).normalize()
+            : new THREE.Quaternion(a, b, c, d).normalize();
+    }
+
+    private detectPoseQuaternionOrder(poseRoot: any, obstacleRoot: any, configs: IDataResource[]): QuaternionOrder {
+        const explicit = this.findQuaternionOrderMarker(poseRoot) || this.findQuaternionOrderMarker(obstacleRoot);
+        if (explicit) return explicit;
+
+        const cameraCount = this.detectCameraCount(obstacleRoot, configs);
+        return cameraCount > 0 && cameraCount <= 5 ? 'wxyz' : 'xyzw';
+    }
+
+    private findQuaternionOrderMarker(root: any): QuaternionOrder | undefined {
+        if (!root || typeof root !== 'object') return undefined;
+        const stack: any[] = [root];
+        const keyReg = /(quat|quaternion|rotation|orientation).*?(order|format|sequence)|(order|format|sequence).*?(quat|quaternion|rotation|orientation)/i;
+        let visited = 0;
+        while (stack.length > 0 && visited < 2000) {
+            const node = stack.pop();
+            visited++;
+            if (!node || typeof node !== 'object') continue;
+            for (const key of Object.keys(node)) {
+                const value = node[key];
+                if (keyReg.test(key) && typeof value === 'string') {
+                    const text = value.toLowerCase();
+                    if (text.includes('wxyz')) return 'wxyz';
+                    if (text.includes('xyzw')) return 'xyzw';
+                }
+                if (value && typeof value === 'object') stack.push(value);
+            }
+        }
+        return undefined;
+    }
+
+    private detectCameraCount(obstacleRoot: any, configs: IDataResource[]) {
+        let cameraCount = configs.reduce((max, config) => Math.max(max, config.viewConfig?.length || 0), 0);
+        if (!obstacleRoot || typeof obstacleRoot !== 'object') return cameraCount;
+
+        const stack = [obstacleRoot];
+        let visited = 0;
+        while (stack.length > 0 && visited < 5000) {
+            const node = stack.pop();
+            visited++;
+            if (!node || typeof node !== 'object') continue;
+            if (node.cam_files && typeof node.cam_files === 'object') {
+                cameraCount = Math.max(cameraCount, Object.keys(node.cam_files).length);
+            }
+            Object.keys(node).forEach((key) => {
+                const value = node[key];
+                if (value && typeof value === 'object') stack.push(value);
+            });
+        }
+        return cameraCount;
     }
 
     private extractFrameToken(name: string) {
