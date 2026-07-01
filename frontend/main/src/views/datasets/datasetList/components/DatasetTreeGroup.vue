@@ -31,6 +31,7 @@
         :key="item.id"
         class="listcard"
         :data="item"
+        :displayName="getDisplayName(item.name)"
         @fetchList="$emit('fetchList')"
         @closeCreateModal="$emit('closeCreateModal')"
       />
@@ -39,7 +40,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, ref } from 'vue';
+  import { computed, onMounted, ref, watch } from 'vue';
   import Icon from '/@/components/Icon';
   import { DatasetListItem } from '/@/api/business/model/datasetModel';
   import ListCard from './DatasetListCard.vue';
@@ -51,6 +52,7 @@
   defineEmits(['fetchList', 'closeCreateModal']);
 
   const currentPath = ref<string[]>([]);
+  const storageKey = 'x1-dataset-browser-current-path';
 
   const getDatasetPathParts = (datasetName: string) =>
     datasetName
@@ -69,6 +71,11 @@
     }),
   );
 
+  const getDisplayName = (datasetName: string) => {
+    const parts = getDatasetPathParts(datasetName);
+    return parts[parts.length - 1] || datasetName;
+  };
+
   const folders = computed(() => {
     const counts = new Map<string, number>();
     props.list.forEach((dataset) => {
@@ -83,6 +90,25 @@
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
   });
+
+  onMounted(() => {
+    try {
+      const stored = sessionStorage.getItem(storageKey);
+      if (stored) {
+        currentPath.value = JSON.parse(stored);
+      }
+    } catch (error) {
+      currentPath.value = [];
+    }
+  });
+
+  watch(
+    currentPath,
+    (value) => {
+      sessionStorage.setItem(storageKey, JSON.stringify(value));
+    },
+    { deep: true },
+  );
 
   const openFolder = (name: string) => {
     currentPath.value = [...currentPath.value, name];

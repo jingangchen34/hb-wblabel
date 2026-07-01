@@ -73,7 +73,7 @@
 
       <div class="text-content">
         <div class="flex justify-between gap-16px">
-          <div class="name">{{ props.data.name }}</div>
+          <div class="name" :title="props.data.name">{{ props.displayName || props.data.name }}</div>
           <div class="more w-24px" @click.stop>
             <Icon icon="akar-icons:more-horizontal" />
             <div class="action-list">
@@ -156,6 +156,7 @@
   const { prefixCls } = useDesign('card');
   type Props = {
     data: DatasetListItem;
+    displayName?: string;
   };
   const regLidar = new RegExp(/point(_?)cloud/i);
   const regImage = new RegExp(/image/i);
