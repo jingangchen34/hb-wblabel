@@ -35,7 +35,7 @@
               @click="
                 (e) => {
                   e.stopPropagation();
-                  handleView(data.id, isFrame());
+                  handleView(data.firstDataId || data.id, isFrame());
                 }
               "
             >
@@ -83,7 +83,7 @@
                 @click="
                   (e) => {
                     e.stopPropagation();
-                    handleView(data.id, isFrame());
+                    handleView(data.firstDataId || data.id, isFrame());
                   }
                 "
               >
