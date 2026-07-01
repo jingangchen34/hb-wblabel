@@ -158,6 +158,37 @@ python3 scripts/import_external_occ_clips.py \
 
 Do not set `--root` directly to the new subdirectory in this case. File paths in MySQL are stored relative to `--root`; using `--root .../7cam_data/newclip` would write paths such as `ks_noise/...`, but nginx serves them under `/external-data/newclip/ks_noise/...`.
 
+For the `/home/user/cjg/conch_data` production layout, use `--conch-data-layout`. This keeps file paths and dataset names relative to `conch_data`, applies the correct annotation rule per top-level directory, and does not modify original files or scene attributes already stored in `data_scene_attribute`.
+
+Directory rules in this mode:
+
+- `fusiondet_data/**` and `xinchi_data/**`: annotated data. Clips without `obstacle_3d.json` are skipped, and obstacle annotations are imported.
+- `new_clip/**`: unannotated data. Clips can be imported without `obstacle_3d.json`, and obstacle annotations are skipped automatically.
+
+Example:
+
+```bash
+python3 scripts/import_external_occ_clips.py \
+  --root /home/user/cjg/conch_data \
+  --scan-root /home/user/cjg/conch_data/fusiondet_data/7cam_data/chizhou/cz_qlc \
+  --conch-data-layout \
+  --bucket-name external-data \
+  --user-id 1 \
+  --output /tmp/import-chizhou-cz-qlc.sql
+```
+
+For unannotated data under `new_clip`, use the same command shape; the script detects `new_clip` and skips annotations automatically:
+
+```bash
+python3 scripts/import_external_occ_clips.py \
+  --root /home/user/cjg/conch_data \
+  --scan-root /home/user/cjg/conch_data/new_clip/7cam_data/kushan/dust_noise \
+  --conch-data-layout \
+  --bucket-name external-data \
+  --user-id 1 \
+  --output /tmp/import-new-clip-kushan-dust-noise.sql
+```
+
 Import the generated SQL into the running MySQL container:
 
 ```bash
@@ -311,4 +342,3 @@ url={https://xtreme1.io/},
 author = {LF AI & Data Foundation},
 }
 ```
-
