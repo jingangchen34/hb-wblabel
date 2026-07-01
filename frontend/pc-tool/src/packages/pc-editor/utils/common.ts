@@ -347,8 +347,10 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
         // config.rowMajor = info.rowMajor;
     });
 
-    // filter
-    viewConfig = cameraInfo.length > 0
+    // Keep raw camera images visible when calibration exists but is incomplete.
+    // Projection only works for views with valid intrinsics/extrinsics.
+    const hasProjectableCamera = viewConfig.some((e) => e.cameraExternal.length === 16 && e.cameraInternal);
+    viewConfig = hasProjectableCamera
         ? viewConfig.filter((e) => e.cameraExternal.length === 16 && e.cameraInternal)
         : viewConfig;
 
