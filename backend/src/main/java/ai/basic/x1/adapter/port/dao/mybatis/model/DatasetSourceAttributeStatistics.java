@@ -1,4 +1,4 @@
-﻿package ai.basic.x1.adapter.port.dao.mybatis.model;
+package ai.basic.x1.adapter.port.dao.mybatis.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
