@@ -5,6 +5,7 @@ import ai.basic.x1.adapter.api.config.ImageDatasetInitialInfo;
 import ai.basic.x1.adapter.api.config.PointCloudDatasetInitialInfo;
 import ai.basic.x1.adapter.api.context.RequestContextHolder;
 import ai.basic.x1.adapter.api.context.UserInfo;
+import ai.basic.x1.adapter.dto.DatasetSourceStatisticsDTO;
 import ai.basic.x1.adapter.port.dao.*;
 import ai.basic.x1.adapter.port.dao.mybatis.model.*;
 import ai.basic.x1.entity.*;
@@ -32,6 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -342,4 +345,70 @@ public class DatasetUseCase {
         return datasetDAO.getBaseMapper().countObject(datasetId);
     }
 
+    public DatasetSourceStatisticsDTO statisticsBySource(String sourceName) {
+        var normalizedSourceName = StrUtil.isBlank(sourceName) ? "fusiondet_data" : sourceName;
+        var mineStatistics = datasetDAO.getBaseMapper().statisticsSourceMine(normalizedSourceName);
+        var classTotals = datasetDAO.getBaseMapper().statisticsSourceClassTotal(normalizedSourceName);
+        var classByMine = datasetDAO.getBaseMapper().statisticsSourceClassByMine(normalizedSourceName);
+        var attributesByMine = datasetDAO.getBaseMapper().statisticsSourceAttributeByMine(normalizedSourceName);
+
+        var mineMap = new LinkedHashMap<String, DatasetSourceStatisticsDTO.MineUnit>();
+        mineStatistics.forEach(item -> mineMap.put(item.getMineName(), DatasetSourceStatisticsDTO.MineUnit.builder()
+                .mineName(item.getMineName())
+                .datasetAmount(defaultInt(item.getDatasetAmount()))
+                .clipAmount(defaultInt(item.getClipAmount()))
+                .annotatedDataAmount(defaultInt(item.getAnnotatedDataAmount()))
+                .classUnits(new ArrayList<>())
+                .attributeUnits(new ArrayList<>())
+                .build()));
+
+        classByMine.forEach(item -> mineMap.computeIfAbsent(item.getMineName(), mineName -> DatasetSourceStatisticsDTO.MineUnit.builder()
+                        .mineName(mineName)
+                        .datasetAmount(0)
+                        .clipAmount(0)
+                        .annotatedDataAmount(0)
+                        .classUnits(new ArrayList<>())
+                        .attributeUnits(new ArrayList<>())
+                        .build())
+                .getClassUnits()
+                .add(DatasetSourceStatisticsDTO.ClassUnit.builder()
+                        .className(item.getClassName())
+                        .color(item.getColor())
+                        .objectAmount(defaultInt(item.getObjectAmount()))
+                        .build()));
+
+        attributesByMine.forEach(item -> mineMap.computeIfAbsent(item.getMineName(), mineName -> DatasetSourceStatisticsDTO.MineUnit.builder()
+                        .mineName(mineName)
+                        .datasetAmount(0)
+                        .clipAmount(0)
+                        .annotatedDataAmount(0)
+                        .classUnits(new ArrayList<>())
+                        .attributeUnits(new ArrayList<>())
+                        .build())
+                .getAttributeUnits()
+                .add(DatasetSourceStatisticsDTO.AttributeUnit.builder()
+                        .category(item.getCategory())
+                        .subType(item.getSubType())
+                        .clipAmount(defaultInt(item.getClipAmount()))
+                        .build()));
+
+        return DatasetSourceStatisticsDTO.builder()
+                .sourceName(normalizedSourceName)
+                .datasetAmount(mineMap.values().stream().mapToInt(DatasetSourceStatisticsDTO.MineUnit::getDatasetAmount).sum())
+                .clipAmount(mineMap.values().stream().mapToInt(DatasetSourceStatisticsDTO.MineUnit::getClipAmount).sum())
+                .annotatedDataAmount(mineMap.values().stream().mapToInt(DatasetSourceStatisticsDTO.MineUnit::getAnnotatedDataAmount).sum())
+                .classTotals(classTotals.stream()
+                        .map(item -> DatasetSourceStatisticsDTO.ClassUnit.builder()
+                                .className(item.getClassName())
+                                .color(item.getColor())
+                                .objectAmount(defaultInt(item.getObjectAmount()))
+                                .build())
+                        .collect(Collectors.toList()))
+                .mineUnits(new ArrayList<>(mineMap.values()))
+                .build();
+    }
+
+    private Integer defaultInt(Integer value) {
+        return value == null ? 0 : value;
+    }
 }

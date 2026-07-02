@@ -84,7 +84,17 @@ const dataset: AppRouteModule = {
         currentActiveMenu: currentActiveMenu,
       },
     },
-    // ontology 子模块
+    {
+      path: 'sourceOverview',
+      name: 'DatasetsSourceOverviewPage',
+      component: () => import('/@/views/datasets/datasetSourceOverview/index.vue'),
+      meta: {
+        title: 'Source Overview',
+        hideMenu: true,
+        currentActiveMenu: currentActiveMenu,
+      },
+    },
+    // ontology module
     {
       path: 'class',
       name: 'DatasetsClassPage',

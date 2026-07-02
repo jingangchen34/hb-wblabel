@@ -458,3 +458,43 @@ export const unLockApi = (params: any) =>
       ignoreCancelToken: true,
     },
   });
+
+export interface DatasetSourceClassUnit {
+  className: string;
+  color: string;
+  objectAmount: number;
+}
+
+export interface DatasetSourceAttributeUnit {
+  category: string;
+  subType: string;
+  clipAmount: number;
+}
+
+export interface DatasetSourceMineUnit {
+  mineName: string;
+  datasetAmount: number;
+  clipAmount: number;
+  annotatedDataAmount: number;
+  classUnits: DatasetSourceClassUnit[];
+  attributeUnits: DatasetSourceAttributeUnit[];
+}
+
+export interface DatasetSourceStatistics {
+  sourceName: string;
+  datasetAmount: number;
+  clipAmount: number;
+  annotatedDataAmount: number;
+  classTotals: DatasetSourceClassUnit[];
+  mineUnits: DatasetSourceMineUnit[];
+}
+
+export const getDatasetSourceStatisticsApi = (params: { source: string }) =>
+  defHttp.get<DatasetSourceStatistics>({
+    url: `${Api.DATASET}/sourceStatistics`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });

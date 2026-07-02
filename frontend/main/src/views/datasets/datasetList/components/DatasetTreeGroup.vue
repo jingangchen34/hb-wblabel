@@ -37,11 +37,20 @@
               </span>
             </span>
             <span class="source-description">{{ getFolderMeta(folder.name).description }}</span>
-            <span class="source-path">{{ folder.name }}</span>
+            <span class="source-footer">
+              <span class="source-path">{{ folder.name }}</span>
+              <span
+                v-if="getFolderMeta(folder.name).statisticsEnabled"
+                class="source-action"
+                @click.stop="openStatistics(folder.name)"
+              >
+                &#x7edf;&#x8ba1;/&#x603b;&#x89c8;
+              </span>
+            </span>
           </span>
           <span class="source-count">
             <strong>{{ folder.count }}</strong>
-            <span>数据集</span>
+            <span>&#x6570;&#x636e;&#x96c6;</span>
           </span>
           <Icon class="source-arrow" icon="ant-design:arrow-right-outlined" size="16" />
         </template>
@@ -71,6 +80,8 @@
   import { computed, onMounted, ref, watch } from 'vue';
   import Icon from '/@/components/Icon';
   import { DatasetListItem } from '/@/api/business/model/datasetModel';
+  import { RouteChildEnum } from '/@/enums/routeEnum';
+  import { useGo } from '/@/hooks/web/usePage';
   import ListCard from './DatasetListCard.vue';
 
   const props = defineProps<{
@@ -79,30 +90,39 @@
 
   defineEmits(['fetchList', 'closeCreateModal']);
 
+  const go = useGo();
   const currentPath = ref<string[]>([]);
   const storageKey = 'x1-dataset-browser-current-path';
   const folderMetaMap: Record<
     string,
-    { title: string; description: string; badge: string; icon: string; theme: string }
+    {
+      title: string;
+      description: string;
+      badge: string;
+      icon: string;
+      theme: string;
+      statisticsEnabled?: boolean;
+    }
   > = {
     fusiondet_data: {
-      title: '海博采集数据',
-      description: 'FusionDet 采集来源，已进入数据集管理流程',
-      badge: '海博',
+      title: '\u6d77\u535a\u91c7\u96c6\u6570\u636e',
+      description: 'FusionDet \u91c7\u96c6\u6765\u6e90\uff0c\u5df2\u8fdb\u5165\u6570\u636e\u96c6\u7ba1\u7406\u6d41\u7a0b',
+      badge: '\u6d77\u535a',
       icon: 'ant-design:database-outlined',
       theme: 'theme-cyan',
+      statisticsEnabled: true,
     },
     new_clip: {
-      title: '新采集待送标',
-      description: '刚采集完成，暂未送标的数据暂存区',
-      badge: '待送标',
+      title: '\u65b0\u91c7\u96c6\u5f85\u9001\u6807',
+      description: '\u521a\u91c7\u96c6\u5b8c\u6210\uff0c\u6682\u672a\u9001\u6807\u7684\u6570\u636e\u6682\u5b58\u533a',
+      badge: '\u5f85\u9001\u6807',
       icon: 'ant-design:inbox-outlined',
       theme: 'theme-amber',
     },
     xinchi_data: {
-      title: '星驰采集数据',
-      description: '星驰采集来源，按目录归档管理',
-      badge: '星驰',
+      title: '\u661f\u9a70\u91c7\u96c6\u6570\u636e',
+      description: '\u661f\u9a70\u91c7\u96c6\u6765\u6e90\uff0c\u6309\u76ee\u5f55\u5f52\u6863\u7ba1\u7406',
+      badge: '\u661f\u9a70',
       icon: 'ant-design:deployment-unit-outlined',
       theme: 'theme-violet',
     },
@@ -133,8 +153,8 @@
   const getFolderMeta = (folderName: string) =>
     folderMetaMap[folderName] || {
       title: folderName,
-      description: '按采集目录归档的数据集',
-      badge: '目录',
+      description: '\u6309\u91c7\u96c6\u76ee\u5f55\u5f52\u6863\u7684\u6570\u636e\u96c6',
+      badge: '\u76ee\u5f55',
       icon: 'ant-design:folder-open-outlined',
       theme: 'theme-gray',
     };
@@ -175,6 +195,10 @@
 
   const openFolder = (name: string) => {
     currentPath.value = [...currentPath.value, name];
+  };
+
+  const openStatistics = (name: string) => {
+    go(`${RouteChildEnum.DATASETS_SOURCE_OVERVIEW}?source=${encodeURIComponent(name)}`);
   };
 
   const goUp = () => {
@@ -324,11 +348,13 @@
     gap: 6px;
   }
 
-  .source-title-row {
+  .source-title-row,
+  .source-footer {
     display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
+    flex-wrap: wrap;
   }
 
   .source-title {
@@ -357,7 +383,6 @@
   }
 
   .source-path {
-    width: fit-content;
     max-width: 100%;
     padding: 3px 8px;
     border-radius: 6px;
@@ -367,6 +392,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .source-action {
+    height: 24px;
+    padding: 0 9px;
+    border-radius: 6px;
+    background: #e8f8fb;
+    color: #0e7490;
+    font-size: 12px;
+    line-height: 24px;
+    font-weight: 600;
+    cursor: pointer;
+
+    &:hover {
+      background: #d3f0f6;
+    }
   }
 
   .source-count {

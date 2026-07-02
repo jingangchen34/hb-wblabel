@@ -19,6 +19,7 @@ export enum RouteChildEnum {
   DATASETS_CLASS = '/datasets/class',
   DATASETS_CLASSIFICATION = '/datasets/classification',
   DATASETS_OVERVIEW = '/datasets/overview',
+  DATASETS_SOURCE_OVERVIEW = '/datasets/sourceOverview',
   MODELS_DETAIL = '/models/detail',
   GROUP_INFO = '/team/groupInfo',
   SEARCH_SCENARIO = '/datasets/searchScenario',

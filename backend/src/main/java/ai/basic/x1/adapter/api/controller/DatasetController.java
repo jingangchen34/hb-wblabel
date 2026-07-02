@@ -114,6 +114,11 @@ public class DatasetController extends BaseDatasetController {
         return datasetUseCase.findOntologyIsExistByDatasetId(datasetId);
     }
 
+    @GetMapping("sourceStatistics")
+    public DatasetSourceStatisticsDTO statisticsBySource(@RequestParam(defaultValue = "fusiondet_data") String source) {
+        return datasetUseCase.statisticsBySource(source);
+    }
+
     @GetMapping("{datasetId}/statistics/dataStatus")
     public DatasetStatisticsDTO statisticsDataStatus(@PathVariable("datasetId") Long datasetId) {
         var datasetStatisticsMap = dataInfoUsecase.getDatasetStatisticsByDatasetIds(List.of(datasetId));

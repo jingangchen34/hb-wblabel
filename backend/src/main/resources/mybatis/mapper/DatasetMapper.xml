@@ -2,7 +2,7 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="ai.basic.x1.adapter.port.dao.mybatis.mapper.DatasetMapper">
 
-    <!-- 通用查询映射结果 -->
+    <!-- Generic dataset result map -->
     <resultMap id="BaseResultMap" type="ai.basic.x1.adapter.port.dao.mybatis.model.Dataset">
         <result column="id" property="id"/>
         <result column="name" property="name"/>
@@ -16,7 +16,7 @@
         <result column="updated_by" property="updatedBy"/>
     </resultMap>
 
-    <!-- 通用查询映射结果 -->
+    <!-- Generic data result map -->
     <resultMap id="DataInfoResultMap" type="ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo">
         <id column="id" property="id"/>
         <result column="dataset_id" property="datasetId"/>
@@ -32,7 +32,7 @@
         <result column="updated_by" property="updatedBy"/>
     </resultMap>
 
-    <!-- 通用查询结果列 -->
+    <!-- Generic dataset columns -->
     <sql id="Base_Column_List">
         id,`name`, `type`, description,is_deleted, created_at, created_by, updated_at, updated_by
     </sql>
@@ -53,6 +53,73 @@
         where d.dataset_id = #{datasetId} and d.is_deleted = FALSE
     </select>
 
+
+    <select id="statisticsSourceMine" resultType="ai.basic.x1.adapter.port.dao.mybatis.model.DatasetSourceMineStatistics">
+        SELECT mine_name AS mineName,
+               COUNT(DISTINCT dataset_id) AS datasetAmount,
+               SUM(CASE WHEN data_type = 'SCENE' THEN 1 ELSE 0 END) AS clipAmount,
+               SUM(CASE WHEN data_type = 'SINGLE_DATA' AND annotation_status = 'ANNOTATED' THEN 1 ELSE 0 END) AS annotatedDataAmount
+        FROM (
+            SELECT ds.id AS dataset_id,
+                   SUBSTRING_INDEX(SUBSTRING_INDEX(ds.name, '/', 3), '/', -1) AS mine_name,
+                   d.type AS data_type,
+                   d.annotation_status
+            FROM dataset ds
+                     LEFT JOIN data d ON d.dataset_id = ds.id AND d.is_deleted = FALSE
+            WHERE ds.is_deleted = FALSE
+              AND ds.name LIKE CONCAT(#{sourceName}, '/%')
+        ) source_data
+        GROUP BY mine_name
+        ORDER BY mine_name
+    </select>
+
+    <select id="statisticsSourceClassTotal" resultType="ai.basic.x1.adapter.port.dao.mybatis.model.DatasetSourceClassStatistics">
+        SELECT dc.name AS className,
+               MAX(dc.color) AS color,
+               COUNT(*) AS objectAmount
+        FROM data_annotation_object dao
+                 INNER JOIN dataset_class dc ON dc.id = dao.class_id
+                 INNER JOIN dataset ds ON ds.id = dao.dataset_id
+                 INNER JOIN data d ON d.id = dao.data_id
+        WHERE ds.is_deleted = FALSE
+          AND d.is_deleted = FALSE
+          AND d.annotation_status = 'ANNOTATED'
+          AND ds.name LIKE CONCAT(#{sourceName}, '/%')
+        GROUP BY dc.name
+        ORDER BY objectAmount DESC
+    </select>
+
+    <select id="statisticsSourceClassByMine" resultType="ai.basic.x1.adapter.port.dao.mybatis.model.DatasetSourceClassStatistics">
+        SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(ds.name, '/', 3), '/', -1) AS mineName,
+               dc.name AS className,
+               MAX(dc.color) AS color,
+               COUNT(*) AS objectAmount
+        FROM data_annotation_object dao
+                 INNER JOIN dataset_class dc ON dc.id = dao.class_id
+                 INNER JOIN dataset ds ON ds.id = dao.dataset_id
+                 INNER JOIN data d ON d.id = dao.data_id
+        WHERE ds.is_deleted = FALSE
+          AND d.is_deleted = FALSE
+          AND d.annotation_status = 'ANNOTATED'
+          AND ds.name LIKE CONCAT(#{sourceName}, '/%')
+        GROUP BY mineName, dc.name
+        ORDER BY mineName, objectAmount DESC
+    </select>
+
+    <select id="statisticsSourceAttributeByMine" resultType="ai.basic.x1.adapter.port.dao.mybatis.model.DatasetSourceAttributeStatistics">
+        SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(ds.name, '/', 3), '/', -1) AS mineName,
+               dsa.category,
+               dsa.sub_type AS subType,
+               COUNT(*) AS clipAmount
+        FROM data_scene_attribute dsa
+                 INNER JOIN dataset ds ON ds.id = dsa.dataset_id
+                 INNER JOIN data d ON d.id = dsa.data_id
+        WHERE ds.is_deleted = FALSE
+          AND d.is_deleted = FALSE
+          AND ds.name LIKE CONCAT(#{sourceName}, '/%')
+        GROUP BY mineName, dsa.category, dsa.sub_type
+        ORDER BY mineName, clipAmount DESC
+    </select>
     <delete id="deleteById">
         update dataset set del_unique_key = id, is_deleted = true where id = #{id}
     </delete>
