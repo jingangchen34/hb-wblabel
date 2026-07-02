@@ -58,14 +58,18 @@
         SELECT mine_name AS mineName,
                COUNT(DISTINCT dataset_id) AS datasetAmount,
                SUM(CASE WHEN data_type = 'SCENE' THEN 1 ELSE 0 END) AS clipAmount,
-               SUM(CASE WHEN data_type = 'SINGLE_DATA' AND annotation_status = 'ANNOTATED' THEN 1 ELSE 0 END) AS annotatedDataAmount
+               SUM(CASE WHEN data_type = 'SINGLE_DATA' AND is_annotated = 1 THEN 1 ELSE 0 END) AS annotatedDataAmount
         FROM (
             SELECT ds.id AS dataset_id,
                    SUBSTRING_INDEX(SUBSTRING_INDEX(ds.name, '/', 3), '/', -1) AS mine_name,
                    d.type AS data_type,
-                   d.annotation_status
+                   CASE WHEN annotated_data.data_id IS NULL THEN 0 ELSE 1 END AS is_annotated
             FROM dataset ds
                      LEFT JOIN data d ON d.dataset_id = ds.id AND d.is_deleted = FALSE
+                     LEFT JOIN (
+                         SELECT DISTINCT data_id
+                         FROM data_annotation_object
+                     ) annotated_data ON annotated_data.data_id = d.id
             WHERE ds.is_deleted = FALSE
               AND ds.name LIKE CONCAT(#{sourceName}, '/%')
         ) source_data
@@ -83,7 +87,6 @@
                  INNER JOIN data d ON d.id = dao.data_id
         WHERE ds.is_deleted = FALSE
           AND d.is_deleted = FALSE
-          AND d.annotation_status = 'ANNOTATED'
           AND ds.name LIKE CONCAT(#{sourceName}, '/%')
         GROUP BY dc.name
         ORDER BY objectAmount DESC
@@ -100,7 +103,6 @@
                  INNER JOIN data d ON d.id = dao.data_id
         WHERE ds.is_deleted = FALSE
           AND d.is_deleted = FALSE
-          AND d.annotation_status = 'ANNOTATED'
           AND ds.name LIKE CONCAT(#{sourceName}, '/%')
         GROUP BY mineName, dc.name
         ORDER BY mineName, objectAmount DESC
