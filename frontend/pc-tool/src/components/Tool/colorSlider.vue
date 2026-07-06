@@ -38,8 +38,32 @@
             style="float: right; width: 60px"
         ></a-input-number>
     </div>
+    <div v-if="currentPointRange" class="point-range-panel">
+        <div class="point-range-title">{{ mergeActive ? 'Current frame' : 'Point cloud' }}</div>
+        <div class="point-range-grid">
+            <span>X</span>
+            <span>{{ formatRange(currentPointRange.xMin, currentPointRange.xMax) }}</span>
+            <span>Y</span>
+            <span>{{ formatRange(currentPointRange.yMin, currentPointRange.yMax) }}</span>
+            <span>Z</span>
+            <span>{{ formatRange(currentPointRange.zMin, currentPointRange.zMax) }}</span>
+        </div>
+        <div class="point-range-count">Points {{ formatCount(currentPointRange.count) }}</div>
+    </div>
+    <div v-if="mergeActive && mergedPointRange" class="point-range-panel merged">
+        <div class="point-range-title">Merged frames</div>
+        <div class="point-range-grid">
+            <span>X</span>
+            <span>{{ formatRange(mergedPointRange.xMin, mergedPointRange.xMax) }}</span>
+            <span>Y</span>
+            <span>{{ formatRange(mergedPointRange.yMin, mergedPointRange.yMax) }}</span>
+            <span>Z</span>
+            <span>{{ formatRange(mergedPointRange.zMin, mergedPointRange.zMax) }}</span>
+        </div>
+        <div class="point-range-count">Points {{ formatCount(mergedPointRange.count) }}</div>
+    </div>
     <div
-        v-else-if="[ColorModeEnum.VELOCITY].includes(config.pointColorMode)"
+        v-if="[ColorModeEnum.VELOCITY].includes(config.pointColorMode)"
         class="title3"
         style="padding-top: 6px"
         >{{ $$('setting_colorvelocity') }}
@@ -170,6 +194,28 @@
     const editor = useInjectEditor();
     const config = editor.state.config;
     let $$ = editor.bindLocale(locale);
+    interface PointRange {
+        xMin: number;
+        xMax: number;
+        yMin: number;
+        yMax: number;
+        zMin: number;
+        zMax: number;
+        count: number;
+    }
+    const pointRangeCache = new WeakMap<object, PointRange>();
+    const mergeActive = computed(() => !!(editor.state as any).mergeActive);
+    const mergedPointRange = computed(() => {
+        if (!mergeActive.value) return null;
+        return pointInfoToRange();
+    });
+    const currentPointRange = computed(() => {
+        if (!mergeActive.value) return pointInfoToRange();
+        const frame = editor.getCurrentFrame();
+        const resource = frame ? editor.dataResource.dataMap[frame.id] : undefined;
+        const position = resource?.pointsData?.position as ArrayLike<number> | undefined;
+        return getPointRange(position) || pointInfoToRange();
+    });
     const colorCodeBg = () => {
         let color: string[];
         if (config.pointColorMode === ColorModeEnum.VELOCITY) {
@@ -328,8 +374,105 @@
     function round(value: any) {
         return Math.round(value * 10) / 10;
     }
+    function pointInfoToRange(): PointRange | null {
+        const { pointInfo } = config;
+        if (!pointInfo || !Number.isFinite(pointInfo.count) || pointInfo.count <= 0) return null;
+        return {
+            xMin: pointInfo.min.x,
+            xMax: pointInfo.max.x,
+            yMin: pointInfo.min.y,
+            yMax: pointInfo.max.y,
+            zMin: pointInfo.min.z,
+            zMax: pointInfo.max.z,
+            count: pointInfo.count,
+        };
+    }
+    function getPointRange(position?: ArrayLike<number>): PointRange | null {
+        if (!position || position.length < 3) return null;
+        if (typeof position === 'object') {
+            const cached = pointRangeCache.get(position as object);
+            if (cached) return cached;
+        }
+        let xMin = Infinity;
+        let xMax = -Infinity;
+        let yMin = Infinity;
+        let yMax = -Infinity;
+        let zMin = Infinity;
+        let zMax = -Infinity;
+        let count = 0;
+        for (let index = 0; index + 2 < position.length; index += 3) {
+            const x = position[index];
+            const y = position[index + 1];
+            const z = position[index + 2];
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+            xMin = Math.min(xMin, x);
+            xMax = Math.max(xMax, x);
+            yMin = Math.min(yMin, y);
+            yMax = Math.max(yMax, y);
+            zMin = Math.min(zMin, z);
+            zMax = Math.max(zMax, z);
+            count++;
+        }
+        if (count === 0) return null;
+        const range = { xMin, xMax, yMin, yMax, zMin, zMax, count };
+        if (typeof position === 'object') pointRangeCache.set(position as object, range);
+        return range;
+    }
+    function formatRange(min: number, max: number) {
+        return `${formatValue(min)} ~ ${formatValue(max)}`;
+    }
+    function formatValue(value: number) {
+        if (!Number.isFinite(value)) return '--';
+        return Number(value).toFixed(2);
+    }
+    function formatCount(value: number) {
+        if (!Number.isFinite(value)) return '0';
+        return Math.round(value).toLocaleString();
+    }
 </script>
 <style lang="less">
+    .point-range-panel {
+        margin: 8px 0 6px 14px;
+        padding: 8px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.05);
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 12px;
+        line-height: 18px;
+
+        &.merged {
+            border-color: rgba(46, 140, 240, 0.35);
+            background: rgba(46, 140, 240, 0.1);
+        }
+
+        .point-range-title {
+            margin-bottom: 4px;
+            color: rgba(255, 255, 255, 0.92);
+            font-weight: 500;
+        }
+
+        .point-range-grid {
+            display: grid;
+            grid-template-columns: 18px 1fr;
+            column-gap: 8px;
+            row-gap: 2px;
+
+            span:nth-child(odd) {
+                color: rgba(255, 255, 255, 0.48);
+            }
+
+            span:nth-child(even) {
+                font-family: Consolas, 'Courier New', monospace;
+            }
+        }
+
+        .point-range-count {
+            margin-top: 4px;
+            color: rgba(255, 255, 255, 0.55);
+            font-family: Consolas, 'Courier New', monospace;
+        }
+    }
     .color-item-container {
         display: flex;
         margin-top: 8px;
