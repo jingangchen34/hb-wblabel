@@ -160,9 +160,9 @@ def expected_paths(frame_out_dir: Path, token: str) -> dict[str, Path]:
 
 
 def frame_output_dir(clip_out_dir: Path, clip_root: Path, token: str) -> Path:
-    split_dir = clip_out_dir / clip_root.name
-    if (split_dir / "det" / f"{token}.json").exists():
-        return split_dir
+    for candidate in (clip_out_dir / clip_root.name, clip_out_dir / "_runtime_clip", clip_out_dir):
+        if (candidate / "det" / f"{token}.json").exists():
+            return candidate
     return clip_out_dir
 
 
