@@ -16,6 +16,8 @@ import ai.basic.x1.entity.enums.DatasetTypeEnum;
 import ai.basic.x1.entity.enums.ModelCodeEnum;
 import ai.basic.x1.entity.enums.ModelDatasetTypeEnum;
 import ai.basic.x1.entity.enums.RunStatusEnum;
+import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
+import ai.basic.x1.entity.enums.RunRecordTypeEnum;
 import ai.basic.x1.usecase.exception.UsecaseCode;
 import ai.basic.x1.usecase.exception.UsecaseException;
 import ai.basic.x1.util.Constants;
@@ -81,6 +83,9 @@ public class ModelUseCase {
     private ModelRunRecordDAO modelRunRecordDAO;
     @Autowired
     private ModelDatasetResultDAO modelDatasetResultDAO;
+
+    @Autowired
+    private DataAnnotationObjectDAO dataAnnotationObjectDAO;
 
     @Autowired
     private ModelSerialNoCountDAO modelSerialNoCountDAO;
@@ -225,6 +230,7 @@ public class ModelUseCase {
         var dataIds = dataInfoUseCase.findModelRunDataIds(modelRunBO.getDataFilterParam(),
                 modelRunBO.getDatasetId(), modelRunBO.getModelId(), totalDataNum);
         checkDatasetType(dataset.getType(), modelBO.getDatasetType());
+        removePreviousModelRuns(modelRunBO.getModelId(), modelRunBO.getDatasetId());
         ModelRunRecord modelRunRecord = ModelRunRecord.builder()
                 .modelId(modelRunBO.getModelId())
                 .modelVersion(modelBO.getVersion())
@@ -237,6 +243,26 @@ public class ModelUseCase {
                 .dataCount(totalDataNum).build();
         modelRunRecordDAO.save(modelRunRecord);
         this.sendModelMessageAsync(modelRunRecord, modelBO, totalDataNum, dataIds);
+    }
+
+    private void removePreviousModelRuns(Long modelId, Long datasetId) {
+        var queryWrapper = Wrappers.lambdaQuery(ModelRunRecord.class)
+                .select(ModelRunRecord::getId)
+                .eq(ModelRunRecord::getModelId, modelId)
+                .eq(ModelRunRecord::getDatasetId, datasetId)
+                .eq(ModelRunRecord::getRunRecordType, RunRecordTypeEnum.RUNS);
+        var previousRunRecords = modelRunRecordDAO.list(queryWrapper);
+        if (CollUtil.isEmpty(previousRunRecords)) {
+            return;
+        }
+        var previousRunRecordIds = previousRunRecords.stream().map(ModelRunRecord::getId).collect(Collectors.toList());
+        dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                .eq(DataAnnotationObject::getDatasetId, datasetId)
+                .eq(DataAnnotationObject::getSourceType, DataAnnotationObjectSourceTypeEnum.MODEL)
+                .in(DataAnnotationObject::getSourceId, previousRunRecordIds));
+        modelDatasetResultDAO.remove(Wrappers.lambdaQuery(ModelDatasetResult.class)
+                .in(ModelDatasetResult::getRunRecordId, previousRunRecordIds));
+        modelRunRecordDAO.removeByIds(previousRunRecordIds);
     }
 
     private void checkDatasetType(DatasetTypeEnum datasetType, ModelDatasetTypeEnum modelDatasetType) {
