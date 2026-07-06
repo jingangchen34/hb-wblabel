@@ -34,22 +34,22 @@ public class PointCloudDetectionModelReqConverter {
             DataInfo dataInfo = DataInfo.builder().id(dataInfoBO.getId()).build();
             List<DataInfoBO.FileNodeBO> content = dataInfoBO.getContent();
             if (ObjectUtil.isNotNull(content)) {
-                content.forEach(fileNodeBO -> traverFile(fileNodeBO, dataInfo));
+                content.forEach(fileNodeBO -> traverFile(fileNodeBO, dataInfo, null));
             }
             return dataInfo;
         }
         return null;
     }
 
-    private static void traverFile(DataInfoBO.FileNodeBO fileNodeBO, DataInfo dataInfo) {
+    private static void traverFile(DataInfoBO.FileNodeBO fileNodeBO, DataInfo dataInfo, String parentPath) {
         if (FILE.equals(fileNodeBO.getType())) {
             String[] subPaths = fileNodeBO.getFile().getPath().split("\\/");
             if (subPaths.length == 1) {
                 subPaths = fileNodeBO.getFile().getPath().split("\\\\");
             }
-            String prePath = subPaths[subPaths.length - 2];
+            String prePath = subPaths.length > 1 ? subPaths[subPaths.length - 2] : parentPath;
             //images
-            if (prePath.startsWith(CAMERA_IMAGE) || prePath.startsWith(IMAGE)) {
+            if (isImagePath(prePath) || isImagePath(parentPath)) {
                 if (CollUtil.isEmpty(dataInfo.getImageUrls())) {
                     List<String> imageUrlList = new ArrayList<>();
                     imageUrlList.add(fileNodeBO.getFile().getUrl());
@@ -59,19 +59,31 @@ public class PointCloudDetectionModelReqConverter {
                 }
             }
             //pcd
-            if (prePath.startsWith(LIDAR_POINT_CLOUD) || prePath.equals(POINT_CLOUD)) {
+            if (isPointCloudPath(prePath) || isPointCloudPath(parentPath)) {
                 dataInfo.setPointCloudUrl(getFileBO(fileNodeBO.getFile()).getUrl());
             }
             //cameraConfig
-            if (prePath.startsWith(CAMERA_CONFIG)) {
+            if (isCameraConfigPath(prePath) || isCameraConfigPath(parentPath)) {
                 dataInfo.setCameraConfigUrl(fileNodeBO.getFile().getUrl());
             }
         }
         if (DIRECTORY.equals(fileNodeBO.getType()) && CollUtil.isNotEmpty(fileNodeBO.getFiles())) {
             for (DataInfoBO.FileNodeBO file : fileNodeBO.getFiles()) {
-                traverFile(file, dataInfo);
+                traverFile(file, dataInfo, fileNodeBO.getName());
             }
         }
+    }
+
+    private static boolean isImagePath(String path) {
+        return ObjectUtil.isNotNull(path) && (path.startsWith(CAMERA_IMAGE) || path.startsWith(IMAGE));
+    }
+
+    private static boolean isPointCloudPath(String path) {
+        return ObjectUtil.isNotNull(path) && (path.startsWith(LIDAR_POINT_CLOUD) || path.equals(POINT_CLOUD));
+    }
+
+    private static boolean isCameraConfigPath(String path) {
+        return ObjectUtil.isNotNull(path) && path.startsWith(CAMERA_CONFIG);
     }
 
 
