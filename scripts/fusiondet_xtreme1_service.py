@@ -109,6 +109,42 @@ def output_dir_for_clip(clip_root: Path) -> Path:
     return OUTPUT_ROOT / f"{clean}__{digest}"
 
 
+def ensure_link_or_copy(source: Path, target: Path) -> None:
+    if target.exists() or target.is_symlink():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.symlink_to(source, target_is_directory=source.is_dir())
+    except OSError:
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target)
+
+
+def prepare_runtime_clip_root(clip_root: Path) -> Path:
+    """Build a lightweight SANet-compatible view of one clip.
+
+    Imported new_clip data uses calib.json and cameras/. The current SANet
+    fusion inference helper expects calib_cylindrical.json and
+    cameras_cylindrical/. Keeping this mapping in the adapter avoids mutating
+    the source clip.
+    """
+    view_root = output_dir_for_clip(clip_root) / "_runtime_clip"
+    ensure_link_or_copy(clip_root / "lidars", view_root / "lidars")
+    if (clip_root / "cameras").exists():
+        ensure_link_or_copy(clip_root / "cameras", view_root / "cameras")
+        ensure_link_or_copy(clip_root / "cameras", view_root / "cameras_cylindrical")
+    if (clip_root / "calib.json").exists():
+        ensure_link_or_copy(clip_root / "calib.json", view_root / "calib.json")
+        ensure_link_or_copy(clip_root / "calib.json", view_root / "calib_cylindrical.json")
+    for name in ("pose.json", "meta.json"):
+        if (clip_root / name).exists():
+            ensure_link_or_copy(clip_root / name, view_root / name)
+    if (clip_root / "anno").exists():
+        ensure_link_or_copy(clip_root / "anno", view_root / "anno")
+    return view_root
+
 def public_url(path: Path) -> str:
     rel = path.resolve().relative_to(OUTPUT_ROOT.resolve()).as_posix()
     return posixpath.join(PUBLIC_OUTPUT_PREFIX.rstrip("/"), rel)
@@ -180,7 +216,7 @@ def run_clip_if_needed(clip_root: Path, token: str) -> tuple[Path, dict[str, Pat
             if clip_out_dir.exists():
                 shutil.rmtree(clip_out_dir)
             clip_out_dir.mkdir(parents=True, exist_ok=True)
-            cmd = build_command(clip_root, clip_out_dir)
+            cmd = build_command(prepare_runtime_clip_root(clip_root), clip_out_dir)
             completed = subprocess.run(
                 cmd,
                 cwd=str(FUSIONDET_ROOT),
