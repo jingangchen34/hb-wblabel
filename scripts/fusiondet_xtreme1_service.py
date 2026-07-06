@@ -61,6 +61,8 @@ SAVE_IMAGE = env("FUSIONDET_SAVE_IMAGE", "1") != "0"
 RUN_TIMEOUT_SEC = int(env("FUSIONDET_RUN_TIMEOUT_SEC", "3600"))
 LOCK_WAIT_SEC = int(env("FUSIONDET_LOCK_WAIT_SEC", "3600"))
 DEFAULT_CONFIDENCE = float(env("FUSIONDET_DEFAULT_CONFIDENCE", "0.99"))
+YAW_SIGN = float(env("FUSIONDET_YAW_SIGN", "1"))
+YAW_OFFSET = float(env("FUSIONDET_YAW_OFFSET", "0"))
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, body: Any) -> None:
@@ -265,13 +267,13 @@ def load_objects(det_json_path: Path) -> list[dict[str, Any]]:
                 "confidence": float(obj.get("score", DEFAULT_CONFIDENCE)),
                 "x": float(translation[0]),
                 "y": float(translation[1]),
-                "z": float(translation[2]),
+                "z": float(translation[2]) + float(size[2]) * 0.5,
                 "dx": float(size[0]),
                 "dy": float(size[1]),
                 "dz": float(size[2]),
                 "rotX": 0.0,
                 "rotY": 0.0,
-                "rotZ": float(obj.get("yaw", 0.0)),
+                "rotZ": float(obj.get("yaw", 0.0)) * YAW_SIGN + YAW_OFFSET,
             }
         )
     return result

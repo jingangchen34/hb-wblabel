@@ -759,6 +759,7 @@ public class DataInfoUseCase {
             lambdaQueryWrapper.in(ModelDataResult::getDataId, dataIds);
         }
         lambdaQueryWrapper.isNotNull(ModelDataResult::getModelResult);
+        lambdaQueryWrapper.orderByDesc(ModelDataResult::getUpdatedAt, ModelDataResult::getId);
         var modelDataResultList = modelDataResultDAO.getBaseMapper().selectList(lambdaQueryWrapper);
         if (CollectionUtil.isNotEmpty(modelDataResultList)) {
             var modelId = modelDataResultList.stream().findFirst().orElse(new ModelDataResult()).getModelId();
