@@ -18,7 +18,7 @@
           <slot name="select"></slot>
         </Form.Item>
 
-        <template v-if="props.modelType !== 'model' && false">
+        <template v-if="props.modelType !== 'model'">
           <Form.Item>
             <Checkbox v-model:checked="formState.checkedData">
               {{ t('business.models.runModel.FliterData') }}
@@ -72,6 +72,9 @@
             </Form.Item>
           </div>
         </template>
+        <div class="run__draft-note">
+          模型结果会作为待校验草稿生成；打开 clip 校验并保存/提交后，才会成为正式真值。
+        </div>
         <Form.Item>
           <Checkbox v-model:checked="formState.checkedResult">
             {{ t('business.models.runModel.FliterModel') }}
@@ -385,6 +388,15 @@
       //   // padding: 0;
       // }
     }
+  }
+  .run__draft-note {
+    margin: 8px 0 16px 0;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: #eefafa;
+    color: #4a6468;
+    font-size: 12px;
+    line-height: 18px;
   }
 </style>
 <style lang="less">
