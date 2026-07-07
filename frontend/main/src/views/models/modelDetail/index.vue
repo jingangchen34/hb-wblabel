@@ -19,6 +19,11 @@
             @reload="handleRefreshQuota"
             :overviewData="overviewData"
           />
+          <Evaluations
+            v-if="item.key == detailType.evaluations"
+            :modelId="modelId"
+            :datasetType="datasetType"
+          />
           <Settings
             :datasetType="datasetType"
             :overviewData="overviewData"
@@ -42,6 +47,7 @@
   import Overview from './components/Overview.vue';
   import Runs from './components/Runs.vue';
   import Settings from './components/Settings.vue';
+  import Evaluations from './components/Evaluations.vue';
   // 接口
   import { getModelByIdApi, getModelQuotaApi } from '/@/api/business/models';
   import { detailType, IOverview, IHeader } from './components/typing';
@@ -92,6 +98,7 @@
 
     // }
     arr.push({ key: detailType.runs, tab: t('business.models.detail.runs') });
+    arr.push({ key: detailType.evaluations, tab: 'Evaluations' });
     arr.push({ key: detailType.settings, tab: t('business.models.detail.settings') });
     return arr;
   });

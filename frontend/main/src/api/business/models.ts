@@ -12,6 +12,7 @@ import {
   editParams,
   setClassParams,
   ModelDataCountParams,
+  DataModelParam,
   testModelUrlConnectioParams,
 } from './model/modelsModel';
 
@@ -19,6 +20,7 @@ enum Api {
   Model = '/model',
   ModelRun = '/modelRun',
   ModelQuota = '/dataset/modelQuota',
+  ModelEvaluation = '/modelEvaluation',
   DATASET = '/dataset',
 }
 
@@ -231,6 +233,43 @@ export const getAllDataset = (params: { datasetTypes: string }) =>
   defHttp.get<Array<{ id: string; name: string }>>({
     url: `${Api.DATASET}/findByType`,
     params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const createModelEvaluationApi = (params: {
+  datasetId: number;
+  modelId: number;
+  dataIds?: Array<number | string>;
+  name?: string;
+  configPath?: string;
+  checkpointPath?: string;
+  dataFilterParam?: DataModelParam;
+}) =>
+  defHttp.post<number>({
+    url: `${Api.ModelEvaluation}/create`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const getModelEvaluationPageApi = (params: { modelId: number; pageNo?: number; pageSize?: number }) =>
+  defHttp.get<any>({
+    url: `${Api.ModelEvaluation}/page`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const getModelEvaluationCompareApi = (params: { evaluationId: number; dataId: number }) =>
+  defHttp.get<any>({
+    url: `${Api.ModelEvaluation}/${params.evaluationId}/data/${params.dataId}/compare`,
     headers: {
       // @ts-ignore
       ignoreCancelToken: true,

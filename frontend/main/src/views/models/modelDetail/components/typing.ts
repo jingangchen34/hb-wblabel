@@ -1,7 +1,8 @@
-/** models详情页类型 */
+/** models详情页类�?*/
 export enum detailType {
   overview = 'OVERVIEW',
   runs = 'RUNS',
+  evaluations = 'EVALUATIONS',
   settings = 'SETTINGS',
 }
 

@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS `model_evaluation_record`
+(
+    `id`              bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+    `model_id`        bigint(20) NOT NULL COMMENT 'Model id',
+    `dataset_id`      bigint(20) NOT NULL COMMENT 'Dataset id',
+    `name`            varchar(128) DEFAULT NULL COMMENT 'Evaluation name',
+    `status`          enum ('STARTED','RUNNING','SUCCESS','SUCCESS_WITH_ERROR','FAILURE') NOT NULL DEFAULT 'STARTED' COMMENT 'Evaluation status',
+    `data_count`      bigint(20) NOT NULL DEFAULT 0 COMMENT 'Selected frame count',
+    `miou_data_count` bigint(20) DEFAULT NULL COMMENT 'Frames with OCC labels participating in mIoU',
+    `config_path`     varchar(512) DEFAULT NULL COMMENT 'FusionDet config path',
+    `checkpoint_path` varchar(512) DEFAULT NULL COMMENT 'FusionDet checkpoint path',
+    `metrics`         json DEFAULT NULL COMMENT 'Evaluation metrics',
+    `data_ids`        json DEFAULT NULL COMMENT 'Selected data ids',
+    `predictions`     json DEFAULT NULL COMMENT 'Predictions grouped by data id for visualization',
+    `output_path`     varchar(512) DEFAULT NULL COMMENT 'Prediction output path',
+    `log_path`        varchar(512) DEFAULT NULL COMMENT 'Evaluation log path',
+    `error_reason`    varchar(1024) DEFAULT NULL COMMENT 'Failure reason',
+    `is_deleted`      bit(1) NOT NULL DEFAULT b'0' COMMENT 'Deleted flag',
+    `created_at`      datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Create time',
+    `created_by`      bigint(20) DEFAULT NULL COMMENT 'Creator id',
+    `updated_at`      datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT 'Update time',
+    `updated_by`      bigint(20) DEFAULT NULL COMMENT 'Updater id',
+    PRIMARY KEY (`id`),
+    KEY `idx_model_evaluation_model` (`model_id`),
+    KEY `idx_model_evaluation_dataset` (`dataset_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Model online evaluation records';

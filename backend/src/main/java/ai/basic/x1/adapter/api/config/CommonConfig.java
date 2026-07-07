@@ -198,6 +198,11 @@ public class CommonConfig implements WebMvcConfigurer {
     }
 
     @Bean
+    public ModelEvaluationUseCase modelEvaluationUseCase() {
+        return new ModelEvaluationUseCase();
+    }
+
+    @Bean
     public UploadDataUseCase uploadDataUseCase() {
         return new UploadDataUseCase();
     }

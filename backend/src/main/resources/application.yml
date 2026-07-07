@@ -143,6 +143,12 @@ pointCloud:
   convertRender:
     url: http://pcd-tools:5000/pointcloud/convert_render
 
+fusiondet:
+  evaluation:
+    url: http://host.docker.internal:8510/evaluate
+    config: configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py
+    checkpoint: work_dirs/occ/epoch_20_ema.pth
+
 dataset:
   similarity:
     url: http://image-vect-visualization:5000/api/v1/calcSimilarity

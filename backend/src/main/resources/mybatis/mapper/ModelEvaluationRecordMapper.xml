@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ai.basic.x1.adapter.port.dao.mybatis.mapper.ModelEvaluationRecordMapper">
+
+    <resultMap id="BaseResultMap" type="ai.basic.x1.adapter.port.dao.mybatis.model.ModelEvaluationRecord">
+        <id column="id" property="id" />
+        <result column="model_id" property="modelId" />
+        <result column="dataset_id" property="datasetId" />
+        <result column="dataset_name" property="datasetName" />
+        <result column="name" property="name" />
+        <result column="status" property="status" />
+        <result column="data_count" property="dataCount" />
+        <result column="miou_data_count" property="miouDataCount" />
+        <result column="config_path" property="configPath" />
+        <result column="checkpoint_path" property="checkpointPath" />
+        <result column="metrics" property="metrics" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="data_ids" property="dataIds" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="predictions" property="predictions" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="output_path" property="outputPath" />
+        <result column="log_path" property="logPath" />
+        <result column="error_reason" property="errorReason" />
+        <result column="is_deleted" property="isDeleted" />
+        <result column="created_at" property="createdAt" />
+        <result column="created_by" property="createdBy" />
+        <result column="updated_at" property="updatedAt" />
+        <result column="updated_by" property="updatedBy" />
+    </resultMap>
+
+    <select id="selectListWithDatasetNotDeleted" resultMap="BaseResultMap">
+        SELECT
+            a.*,
+            b.`name` AS dataset_name
+        FROM model_evaluation_record a
+        INNER JOIN dataset b
+            ON a.dataset_id = b.id
+            AND a.is_deleted = 0
+            AND b.is_deleted = 0
+        ${ew.customSqlSegment("a")}
+    </select>
+</mapper>
