@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Platform evaluation adapter for FusionDet/SANet.
 
 This service is intentionally separate from FusionDet's original tools/test.py.
@@ -291,6 +291,9 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     data_ids = [int(x) for x in payload.get("dataIds", [])]
     config_path = str(payload.get("configPath") or "configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py")
     checkpoint_path = str(payload.get("checkpointPath") or "work_dirs/occ/epoch_20_ema.pth")
+    metrics = [str(metric) for metric in payload.get("metrics") or ["mAP", "miou"] if str(metric) in {"mAP", "miou"}]
+    if not metrics:
+        metrics = ["mAP", "miou"]
     ann_file, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids)
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
     outputs_path = work_dir / f"eval_{evaluation_id}_outputs.pkl"
@@ -301,7 +304,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         str(TEST_SCRIPT),
         config_path,
         "--checkpoint", checkpoint_path,
-        "--eval", "mAP", "miou",
+        "--eval", *metrics,
         "--out", str(outputs_path),
         "--cfg-options", f"data.test.ann_file={ann_file}",
         "--eval-options", f"jsonfile_prefix={result_prefix}", f"save_dir={result_prefix}",
@@ -322,7 +325,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         class_names = None
     predictions = predictions_from_outputs(outputs_path, ordered_data_ids, class_names)
     return {
-        "metrics": parse_metrics(completed.stdout, work_dir),
+        "metrics": {**parse_metrics(completed.stdout, work_dir), "requested": metrics},
         "miouDataCount": miou_count,
         "outputPath": str(outputs_path),
         "logPath": str(log_path),

@@ -21,6 +21,8 @@ public class ModelEvaluationCreateBO {
 
     private String checkpointPath;
 
+    private List<String> metrics;
+
     private Long createdBy;
 
     private ModelRunFilterDataBO dataFilterParam;

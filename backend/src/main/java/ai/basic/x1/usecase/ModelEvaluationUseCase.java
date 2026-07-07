@@ -36,6 +36,7 @@ import org.springframework.beans.factory.annotation.Value;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
@@ -88,7 +89,7 @@ public class ModelEvaluationUseCase {
                 .createdBy(createBO.getCreatedBy())
                 .build();
         modelEvaluationRecordDAO.save(record);
-        EXECUTOR.execute(() -> runEvaluation(record.getId(), frameIds, createBO.getCreatedBy()));
+        EXECUTOR.execute(() -> runEvaluation(record.getId(), frameIds, resolveMetrics(createBO), createBO.getCreatedBy()));
         return record.getId();
     }
 
@@ -99,6 +100,18 @@ public class ModelEvaluationUseCase {
         var page = modelEvaluationRecordDAO.getBaseMapper().selectListWithDatasetNotDeleted(
                 new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(pageNo, pageSize), wrapper);
         return DefaultConverter.convert(page, ModelEvaluationRecord.class);
+    }
+
+    public void delete(Long id, Long userId) {
+        var record = modelEvaluationRecordDAO.getById(id);
+        if (record == null) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Evaluation record does not exist.");
+        }
+        modelEvaluationRecordDAO.updateById(ModelEvaluationRecord.builder()
+                .id(id)
+                .isDeleted(true)
+                .updatedBy(userId)
+                .build());
     }
 
     public ModelEvaluationCompareDTO compare(Long evaluationId, Long dataId) {
@@ -142,6 +155,21 @@ public class ModelEvaluationUseCase {
             datasetIds.add(createBO.getDatasetId());
         }
         return datasetIds.stream().distinct().collect(Collectors.toList());
+    }
+
+    private List<String> resolveMetrics(ModelEvaluationCreateBO createBO) {
+        var metrics = createBO.getMetrics();
+        if (CollUtil.isEmpty(metrics)) {
+            return List.of("mAP", "miou");
+        }
+        var resolved = metrics.stream()
+                .filter(StrUtil::isNotBlank)
+                .map(String::trim)
+                .map(metric -> ObjectUtil.equals(metric, "map") ? "mAP" : metric)
+                .filter(metric -> Arrays.asList("mAP", "miou").contains(metric))
+                .distinct()
+                .collect(Collectors.toList());
+        return CollUtil.isEmpty(resolved) ? List.of("mAP", "miou") : resolved;
     }
 
     private String buildEvaluationName(List<Long> datasetIds) {
@@ -199,7 +227,7 @@ public class ModelEvaluationUseCase {
         return frameIds.stream().distinct().collect(Collectors.toList());
     }
 
-    private void runEvaluation(Long evaluationId, List<Long> frameIds, Long userId) {
+    private void runEvaluation(Long evaluationId, List<Long> frameIds, List<String> metrics, Long userId) {
         updateStatus(evaluationId, RunStatusEnum.RUNNING, null, userId);
         var record = modelEvaluationRecordDAO.getById(evaluationId);
         var request = new JSONObject();
@@ -209,7 +237,7 @@ public class ModelEvaluationUseCase {
         request.set("dataIds", frameIds);
         request.set("configPath", record.getConfigPath());
         request.set("checkpointPath", record.getCheckpointPath());
-        request.set("metrics", List.of("mAP", "miou"));
+        request.set("metrics", metrics);
         try {
             var response = HttpRequest.post(evaluationUrl)
                     .body(JSONUtil.toJsonStr(request), ContentType.JSON.getValue())

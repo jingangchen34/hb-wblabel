@@ -39,4 +39,9 @@ public class ModelEvaluationController extends BaseController {
     public ModelEvaluationCompareDTO compare(@PathVariable Long evaluationId, @PathVariable Long dataId) {
         return modelEvaluationUseCase.compare(evaluationId, dataId);
     }
+    @PostMapping("delete/{id}")
+    public void delete(@PathVariable Long id) {
+        var user = loggedUser();
+        modelEvaluationUseCase.delete(id, user == null ? null : user.getId());
+    }
 }

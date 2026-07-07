@@ -46,18 +46,32 @@
             <Radio.Button value="NOT_SPLIT">Not Split</Radio.Button>
           </Radio.Group>
         </Form.Item>
+        <Form.Item label="Eval Metrics" required>
+          <Checkbox.Group v-model:value="evaluateForm.metrics">
+            <Checkbox value="mAP">mAP</Checkbox>
+            <Checkbox value="miou">mIoU</Checkbox>
+          </Checkbox.Group>
+        </Form.Item>
         <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
+    </Modal>
+    <Modal v-model:visible="metricsVisible" title="Evaluation Metrics" width="900px" :footer="null">
+      <div class="metrics-detail">
+        <div class="metrics-detail__summary">{{ metricsSummary }}</div>
+        <pre v-if="selectedMetricsRecord?.metrics?.miouTable">{{ selectedMetricsRecord.metrics.miouTable }}</pre>
+        <pre>{{ metricsJson }}</pre>
+      </div>
     </Modal>
   </div>
 </template>
 <script lang="tsx" setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue';
-  import { Form, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
+  import { Checkbox, Form, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
   import { Button } from '/@@/Button';
   import { getDateTime } from '/@/utils/business/timeFormater';
   import {
     createModelEvaluationApi,
+    deleteModelEvaluationApi,
     getAllDataset,
     getModelDataCountApi,
     getModelEvaluationPageApi,
@@ -74,6 +88,8 @@
   const loading = ref(false);
   const creating = ref(false);
   const evaluateVisible = ref(false);
+  const metricsVisible = ref(false);
+  const selectedMetricsRecord = ref<any>(null);
   const pageNo = ref(1);
   const pageSize = ref(10);
   const total = ref(0);
@@ -83,6 +99,7 @@
     sourceMode: 'SPLIT',
     datasetIds: [] as number[],
     splitType: 'TEST',
+    metrics: ['mAP', 'miou'] as string[],
   });
 
   const statusColor = {
@@ -99,10 +116,35 @@
     return typeof value === 'number' ? value.toFixed(4) : value;
   };
 
+  const metricsSummary = computed(() => {
+    const record = selectedMetricsRecord.value;
+    if (!record) return '';
+    return `Id ${record.id} / ${record.name || ''}`;
+  });
+
+  const metricsJson = computed(() => JSON.stringify(selectedMetricsRecord.value?.metrics || {}, null, 2));
+
   const datasetTypes = computed(() => {
     if (props.datasetType === datasetTypeEnum.IMAGE) return datasetTypeEnum.IMAGE;
     return `${datasetTypeEnum.LIDAR_BASIC},${datasetTypeEnum.LIDAR_FUSION}`;
   });
+
+  const openMetrics = (record: any) => {
+    selectedMetricsRecord.value = record;
+    metricsVisible.value = true;
+  };
+
+  const deleteEvaluation = (record: any) => {
+    Modal.confirm({
+      title: 'Delete evaluation?',
+      content: record.name,
+      onOk: async () => {
+        await deleteModelEvaluationApi({ id: record.id });
+        createMessage.success('Evaluation deleted.');
+        await loadList();
+      },
+    });
+  };
 
   const openDataset = (record: any) => {
     go({
@@ -149,9 +191,13 @@
     },
     {
       title: 'Actions',
-      width: 130,
+      width: 240,
       customRender: ({ record }) => (
-        <Button type="link" onClick={() => openDataset(record)}>Open Dataset</Button>
+        <div class="action-cell">
+          <Button type="link" onClick={() => openDataset(record)}>Open Dataset</Button>
+          <Button type="link" onClick={() => openMetrics(record)}>Metrics</Button>
+          <Button type="link" danger onClick={() => deleteEvaluation(record)}>Delete</Button>
+        </div>
       ),
     },
     {
@@ -227,6 +273,10 @@
       createMessage.warning('Please select dataset.');
       return;
     }
+    if (!evaluateForm.metrics.length) {
+      createMessage.warning('Please select eval metrics.');
+      return;
+    }
     if (!matchedCount.value) {
       createMessage.warning('No matched frames for evaluation.');
       return;
@@ -237,6 +287,7 @@
         datasetId: evaluateForm.datasetIds[0],
         datasetIds: evaluateForm.datasetIds,
         modelId: Number(props.modelId),
+        metrics: evaluateForm.metrics,
         dataFilterParam: {
           dataCountRatio: 100,
           isExcludeModelData: false,
@@ -277,6 +328,30 @@
     &__count {
       font-size: 13px;
       color: #666;
+    }
+  }
+
+  .action-cell {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  .metrics-detail {
+    max-height: 650px;
+    overflow: auto;
+
+    &__summary {
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    pre {
+      padding: 12px;
+      background: #f7f8fa;
+      border-radius: 4px;
+      white-space: pre-wrap;
     }
   }
 

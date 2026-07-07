@@ -239,6 +239,14 @@ export const getAllDataset = (params: { datasetTypes: string }) =>
     },
   });
 
+export const deleteModelEvaluationApi = (params: BasicIdParams) =>
+  defHttp.post<null>({
+    url: `${Api.ModelEvaluation}/delete/${params.id}`,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
 export const createModelEvaluationApi = (params: {
   datasetId?: number;
   datasetIds?: number[];
@@ -247,6 +255,7 @@ export const createModelEvaluationApi = (params: {
   name?: string;
   configPath?: string;
   checkpointPath?: string;
+  metrics?: string[];
   dataFilterParam?: DataModelParam;
 }) =>
   defHttp.post<number>({

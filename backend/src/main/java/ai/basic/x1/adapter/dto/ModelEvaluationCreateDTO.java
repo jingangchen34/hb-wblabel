@@ -24,6 +24,8 @@ public class ModelEvaluationCreateDTO {
 
     private String checkpointPath;
 
+    private List<String> metrics;
+
     @Valid
     private ModelRunFilterDataDTO dataFilterParam;
 }
