@@ -240,7 +240,8 @@ export const getAllDataset = (params: { datasetTypes: string }) =>
   });
 
 export const createModelEvaluationApi = (params: {
-  datasetId: number;
+  datasetId?: number;
+  datasetIds?: number[];
   modelId: number;
   dataIds?: Array<number | string>;
   name?: string;

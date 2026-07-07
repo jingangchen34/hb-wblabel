@@ -13,6 +13,7 @@ import json
 import os
 import pickle
 import subprocess
+import shutil
 import sys
 import time
 from http import HTTPStatus
@@ -34,6 +35,7 @@ TEST_SCRIPT = Path(env("FUSIONDET_TEST_SCRIPT", str(FUSIONDET_ROOT / "tools/test
 BASE_INFO_PKL = Path(env("FUSIONDET_BASE_INFO_PKL", str(FUSIONDET_ROOT / "dataset/xinchi_infos_val.pkl")))
 WORK_ROOT = Path(env("FUSIONDET_PLATFORM_EVAL_ROOT", str(FUSIONDET_ROOT / "work_dirs/platform_eval")))
 MYSQL_BIN = env("MYSQL_BIN", "mysql")
+MYSQL_DOCKER_CONTAINER = env("MYSQL_DOCKER_CONTAINER", "hb-wblabel-mysql-1")
 MYSQL_HOST = env("XTREME1_MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = env("XTREME1_MYSQL_PORT", "8191")
 MYSQL_USER = env("XTREME1_MYSQL_USER", "xtreme1")
@@ -51,11 +53,8 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, body: Any) -> No
     handler.wfile.write(data)
 
 
-def mysql_rows(sql: str) -> list[list[str]]:
-    cmd = [
-        MYSQL_BIN,
-        f"-h{MYSQL_HOST}",
-        f"-P{MYSQL_PORT}",
+def mysql_command(sql: str) -> list[str]:
+    mysql_args = [
         f"-u{MYSQL_USER}",
         f"-p{MYSQL_PASSWORD}",
         "--batch",
@@ -65,6 +64,15 @@ def mysql_rows(sql: str) -> list[list[str]]:
         "-e",
         sql,
     ]
+    if shutil.which(MYSQL_BIN):
+        return [MYSQL_BIN, f"-h{MYSQL_HOST}", f"-P{MYSQL_PORT}", *mysql_args]
+    if MYSQL_DOCKER_CONTAINER and shutil.which("docker"):
+        return ["docker", "exec", MYSQL_DOCKER_CONTAINER, "mysql", *mysql_args]
+    return [MYSQL_BIN, f"-h{MYSQL_HOST}", f"-P{MYSQL_PORT}", *mysql_args]
+
+
+def mysql_rows(sql: str) -> list[list[str]]:
+    cmd = mysql_command(sql)
     completed = subprocess.run(cmd, text=True, capture_output=True, timeout=120)
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())

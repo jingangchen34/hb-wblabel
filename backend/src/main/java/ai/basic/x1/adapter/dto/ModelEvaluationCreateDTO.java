@@ -10,8 +10,9 @@ import java.util.List;
 @Data
 public class ModelEvaluationCreateDTO {
 
-    @NotNull
     private Long datasetId;
+
+    private List<Long> datasetIds;
 
     @NotNull
     private Long modelId;

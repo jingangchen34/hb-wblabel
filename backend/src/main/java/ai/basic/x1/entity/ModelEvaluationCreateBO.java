@@ -9,6 +9,8 @@ public class ModelEvaluationCreateBO {
 
     private Long datasetId;
 
+    private List<Long> datasetIds;
+
     private Long modelId;
 
     private List<Long> dataIds;

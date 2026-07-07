@@ -20,31 +20,33 @@
       @cancel="evaluateVisible = false"
     >
       <Form :model="evaluateForm" layout="vertical">
-        <Form.Item label="Dataset" required>
-          <Select v-model:value="evaluateForm.datasetId" optionFilterProp="label" @change="refreshDataCount">
+        <Form.Item label="Evaluation Source">
+          <Radio.Group v-model:value="evaluateForm.sourceMode" button-style="solid" @change="refreshDataCount">
+            <Radio.Button value="SPLIT">By Split</Radio.Button>
+            <Radio.Button value="MANUAL">Manual Datasets</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+        <Form.Item label="Datasets" required>
+          <Select
+            v-model:value="evaluateForm.datasetIds"
+            mode="multiple"
+            optionFilterProp="label"
+            @change="refreshDataCount"
+          >
             <Select.Option v-for="item in datasetOptions" :key="item.id" :value="item.id" :label="item.name">
               {{ item.name }}
             </Select.Option>
           </Select>
         </Form.Item>
-        <Form.Item label="Split">
+        <Form.Item v-if="evaluateForm.sourceMode === 'SPLIT'" label="Split">
           <Radio.Group v-model:value="evaluateForm.splitType" button-style="solid" @change="refreshDataCount">
-            <Radio.Button value="">All</Radio.Button>
             <Radio.Button value="TRAINING">Training</Radio.Button>
             <Radio.Button value="VALIDATION">Validation</Radio.Button>
             <Radio.Button value="TEST">Test</Radio.Button>
-            <Radio.Button value="NOT_SPLIT">Not Splited</Radio.Button>
+            <Radio.Button value="NOT_SPLIT">Not Split</Radio.Button>
           </Radio.Group>
         </Form.Item>
-        <Form.Item label="Annotation Status">
-          <Radio.Group v-model:value="evaluateForm.annotationStatus" button-style="solid" @change="refreshDataCount">
-            <Radio.Button value="">All</Radio.Button>
-            <Radio.Button value="ANNOTATED">Annotated</Radio.Button>
-            <Radio.Button value="NOT_ANNOTATED">Not Annotated</Radio.Button>
-            <Radio.Button value="INVALID">Invalid</Radio.Button>
-          </Radio.Group>
-        </Form.Item>
-        <div class="evaluations__count">Matched frames: {{ matchedCount }}</div>
+        <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
     </Modal>
   </div>
@@ -78,9 +80,9 @@
   const datasetOptions = ref<any[]>([]);
   const matchedCount = ref(0);
   const evaluateForm = reactive({
-    datasetId: undefined as number | undefined,
-    splitType: '',
-    annotationStatus: 'ANNOTATED',
+    sourceMode: 'SPLIT',
+    datasetIds: [] as number[],
+    splitType: 'TEST',
   });
 
   const statusColor = {
@@ -190,26 +192,29 @@
   const loadDatasetOptions = async () => {
     const res = await getAllDataset({ datasetTypes: datasetTypes.value });
     datasetOptions.value = res || [];
-    if (!evaluateForm.datasetId) {
-      evaluateForm.datasetId = datasetOptions.value?.[0]?.id;
+    if (!evaluateForm.datasetIds.length && datasetOptions.value?.[0]?.id) {
+      evaluateForm.datasetIds = [datasetOptions.value[0].id];
     }
     await refreshDataCount();
   };
 
   const refreshDataCount = async () => {
-    if (!evaluateForm.datasetId) {
+    if (!evaluateForm.datasetIds.length) {
       matchedCount.value = 0;
       return;
     }
-    const res = await getModelDataCountApi({
-      datasetId: evaluateForm.datasetId,
-      modelId: Number(props.modelId),
-      dataCountRatio: 100,
-      isExcludeModelData: false,
-      splitType: evaluateForm.splitType || undefined,
-      annotationStatus: evaluateForm.annotationStatus || undefined,
-    });
-    matchedCount.value = Number(res || 0);
+    const counts = await Promise.all(
+      evaluateForm.datasetIds.map((datasetId) =>
+        getModelDataCountApi({
+          datasetId,
+          modelId: Number(props.modelId),
+          dataCountRatio: 100,
+          isExcludeModelData: false,
+          splitType: evaluateForm.sourceMode === 'SPLIT' ? evaluateForm.splitType : undefined,
+        }),
+      ),
+    );
+    matchedCount.value = counts.reduce((sum, count) => sum + Number(count || 0), 0);
   };
 
   const openEvaluateModal = async () => {
@@ -218,7 +223,7 @@
   };
 
   const handleCreateEvaluation = async () => {
-    if (!evaluateForm.datasetId) {
+    if (!evaluateForm.datasetIds.length) {
       createMessage.warning('Please select dataset.');
       return;
     }
@@ -229,13 +234,13 @@
     creating.value = true;
     try {
       await createModelEvaluationApi({
-        datasetId: evaluateForm.datasetId,
+        datasetId: evaluateForm.datasetIds[0],
+        datasetIds: evaluateForm.datasetIds,
         modelId: Number(props.modelId),
         dataFilterParam: {
           dataCountRatio: 100,
           isExcludeModelData: false,
-          splitType: evaluateForm.splitType || undefined,
-          annotationStatus: evaluateForm.annotationStatus || undefined,
+          splitType: evaluateForm.sourceMode === 'SPLIT' ? evaluateForm.splitType : undefined,
         },
       });
       createMessage.success('Evaluation task created.');

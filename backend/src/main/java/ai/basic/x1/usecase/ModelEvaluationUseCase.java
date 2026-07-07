@@ -66,7 +66,11 @@ public class ModelEvaluationUseCase {
     private static final ExecutorService EXECUTOR = ThreadUtil.newExecutor(2);
 
     public Long create(ModelEvaluationCreateBO createBO) {
-        var frameIds = resolveFrameIds(createBO);
+        var datasetIds = resolveDatasetIds(createBO);
+        if (CollUtil.isEmpty(datasetIds)) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Please select dataset.");
+        }
+        var frameIds = resolveFrameIds(createBO, datasetIds);
         if (CollUtil.isEmpty(frameIds)) {
             throw new UsecaseException(UsecaseCode.PARAM_ERROR, "No single frame data selected.");
         }
@@ -74,8 +78,8 @@ public class ModelEvaluationUseCase {
         var checkpointPath = StrUtil.blankToDefault(createBO.getCheckpointPath(), defaultCheckpointPath);
         var record = ModelEvaluationRecord.builder()
                 .modelId(createBO.getModelId())
-                .datasetId(createBO.getDatasetId())
-                .name(StrUtil.blankToDefault(createBO.getName(), "Eval-" + DateUtil.format(OffsetDateTime.now().toLocalDateTime(), DatePattern.PURE_DATETIME_PATTERN)))
+                .datasetId(datasetIds.get(0))
+                .name(StrUtil.blankToDefault(createBO.getName(), buildEvaluationName(datasetIds)))
                 .status(RunStatusEnum.STARTED)
                 .dataCount((long) frameIds.size())
                 .dataIds(JSONUtil.parseArray(frameIds))
@@ -129,9 +133,25 @@ public class ModelEvaluationUseCase {
                 .build();
     }
 
-    private List<Long> resolveFrameIds(ModelEvaluationCreateBO createBO) {
+    private List<Long> resolveDatasetIds(ModelEvaluationCreateBO createBO) {
+        var datasetIds = new ArrayList<Long>();
+        if (CollUtil.isNotEmpty(createBO.getDatasetIds())) {
+            datasetIds.addAll(createBO.getDatasetIds());
+        }
+        if (createBO.getDatasetId() != null) {
+            datasetIds.add(createBO.getDatasetId());
+        }
+        return datasetIds.stream().distinct().collect(Collectors.toList());
+    }
+
+    private String buildEvaluationName(List<Long> datasetIds) {
+        var prefix = datasetIds.size() > 1 ? "Eval-" + datasetIds.size() + "sets-" : "Eval-";
+        return prefix + DateUtil.format(OffsetDateTime.now().toLocalDateTime(), DatePattern.PURE_DATETIME_PATTERN);
+    }
+
+    private List<Long> resolveFrameIds(ModelEvaluationCreateBO createBO, List<Long> datasetIds) {
         if (CollUtil.isNotEmpty(createBO.getDataIds())) {
-            return expandFrameIds(createBO.getDatasetId(), createBO.getDataIds());
+            return expandFrameIds(datasetIds.get(0), createBO.getDataIds());
         }
         var filter = createBO.getDataFilterParam();
         if (filter == null) {
@@ -146,12 +166,15 @@ public class ModelEvaluationUseCase {
         if (filter.getIsExcludeModelData() == null) {
             filter.setIsExcludeModelData(false);
         }
-        var totalDataNum = dataInfoUseCase.findModelRunDataCount(filter, createBO.getDatasetId(), createBO.getModelId());
-        totalDataNum = (long) Math.ceil(totalDataNum * filter.getDataCountRatio() / 100.0D);
-        if (ObjectUtil.equals(totalDataNum, 0L)) {
-            return List.of();
+        var frameIds = new ArrayList<Long>();
+        for (var datasetId : datasetIds) {
+            var totalDataNum = dataInfoUseCase.findModelRunDataCount(filter, datasetId, createBO.getModelId());
+            totalDataNum = (long) Math.ceil(totalDataNum * filter.getDataCountRatio() / 100.0D);
+            if (!ObjectUtil.equals(totalDataNum, 0L)) {
+                frameIds.addAll(dataInfoUseCase.findModelRunDataIds(filter, datasetId, createBO.getModelId(), totalDataNum));
+            }
         }
-        return dataInfoUseCase.findModelRunDataIds(filter, createBO.getDatasetId(), createBO.getModelId(), totalDataNum);
+        return frameIds.stream().distinct().collect(Collectors.toList());
     }
 
     private List<Long> expandFrameIds(Long datasetId, List<Long> selectedIds) {
