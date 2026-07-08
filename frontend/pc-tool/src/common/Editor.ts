@@ -41,12 +41,15 @@ export default class Editor extends BaseEditor {
         frames = frames || this.state.frames;
 
         if (!force && !this.needSave(frames)) return;
+        if (force) {
+            await this.dataManager.loadMissingFrameObjects(frames.map((frame) => frame.id));
+        }
 
         let dataInfos = [] as any[];
         let queryTime = frames[0].queryTime;
         frames.forEach((dataMeta) => {
             // if (dataMeta.skipped) return;
-            if (!dataMeta.needSave) return;
+            if (!force && !dataMeta.needSave) return;
             let annotates = this.dataManager.getFrameObject(dataMeta.id) || [];
             if (new Date(dataMeta.queryTime).getTime() > new Date(queryTime).getTime())
                 queryTime = dataMeta.queryTime;
@@ -57,14 +60,19 @@ export default class Editor extends BaseEditor {
             let dataAnnotations = [] as any[];
             data.forEach((e) => {
                 let classConfig = this.getClassType(e.classId || e.classType || '');
+                e.uuid = undefined;
+                e.sourceId = this.state.config.withoutTaskId;
+                e.sourceType = SourceType.DATA_FLOW;
+                e.modelRun = '';
+                e.modelRunLabel = '';
                 let objectV2 = utils.translateToObjectV2(e, classConfig);
                 infos.push({
-                    id: e.uuid || undefined,
+                    id: undefined,
                     frontId: e.frontId,
                     classId: classConfig?.id,
-                    source: e.modelRun ? 'MODEL' : 'ARTIFICIAL',
-                    sourceId: e.sourceId,
-                    sourceType: e.sourceType,
+                    source: 'ARTIFICIAL',
+                    sourceId: this.state.config.withoutTaskId,
+                    sourceType: SourceType.DATA_FLOW,
                     classAttributes: objectV2,
                 });
             });
@@ -96,6 +104,15 @@ export default class Editor extends BaseEditor {
             // debugger
             await api.saveObject(objectInfo).then((keyMap) => {
                 this.updateBackId(keyMap);
+                frames.forEach((frame) => {
+                    const annotates = this.dataManager.getFrameObject(frame.id) || [];
+                    annotates.forEach((annotate: any) => {
+                        annotate.userData.sourceId = this.state.config.withoutTaskId;
+                        annotate.userData.sourceType = SourceType.DATA_FLOW;
+                        annotate.userData.modelRun = '';
+                        annotate.userData.modelRunLabel = '';
+                    });
+                });
             });
             frames.forEach((e) => {
                 e.needSave = false;
