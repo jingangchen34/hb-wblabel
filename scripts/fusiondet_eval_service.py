@@ -257,13 +257,17 @@ def frame_obstacle_entry(
     source: dict[str, Any],
     clip_root: Path,
     gt_objects: list[dict[str, Any]],
+    valid_camera_names: set[str],
 ) -> tuple[str, dict[str, Any]]:
     lidar_rel = source["lidar"].relative_to(clip_root)
     timestamp = timestamp_from_lidar_name(source["lidar"].name)
     cam_files = {}
     for group_name, camera_path in sorted(source["cameras"].items()):
         rel = camera_path.relative_to(clip_root)
-        cam_files[camera_key(group_name, rel)] = {
+        cam_name = camera_key(group_name, rel)
+        if cam_name not in valid_camera_names:
+            continue
+        cam_files[cam_name] = {
             "cam_file": rel.as_posix(),
             "cylindrical_cam_file": rel.as_posix(),
             "ego_time": Path(camera_path).stem,
@@ -279,6 +283,20 @@ def frame_obstacle_entry(
         "next_time_file": "",
         "platform_data_id": frame["id"],
     }
+
+
+def valid_calib_cameras(calib_path: Path) -> set[str]:
+    try:
+        calib = json.loads(calib_path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    valid = set()
+    for name, value in calib.items():
+        if name == "LIDAR_CAR" or not isinstance(value, dict):
+            continue
+        if value.get("rotation") is not None and value.get("translation") is not None and value.get("camera_intrinsic") is not None:
+            valid.add(name)
+    return valid
 
 
 def write_converter_helper(helper_path: Path) -> None:
@@ -359,6 +377,7 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
             calib_source = clip_abs / "calib.json"
         ensure_link_or_copy(calib_source, scene_dir / "calib_cylindrical.json")
         ensure_link_or_copy(calib_source, scene_dir / "calib.json")
+        valid_camera_names = valid_calib_cameras(calib_source)
         if (clip_abs / "pose.json").exists():
             ensure_link_or_copy(clip_abs / "pose.json", scene_dir / "pose.json")
         else:
@@ -377,7 +396,7 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
         obstacle: dict[str, Any] = {}
         keys: list[str] = []
         for frame, source in zip(scene["frames"], scene["sources"]):
-            key, entry = frame_obstacle_entry(frame, source, clip_root, gt_map.get(int(frame["id"]), []))
+            key, entry = frame_obstacle_entry(frame, source, clip_root, gt_map.get(int(frame["id"]), []), valid_camera_names)
             keys.append(key)
             obstacle[key] = entry
             lidar_stem = Path(source["lidar"]).stem
