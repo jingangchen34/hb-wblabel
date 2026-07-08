@@ -61,8 +61,8 @@
     <Modal v-model:visible="metricsVisible" title="Evaluation Metrics" width="900px" :footer="null">
       <div class="metrics-detail">
         <div class="metrics-detail__summary">{{ metricsSummary }}</div>
+        <pre v-if="selectedMetricsRecord?.metrics?.detectionText">{{ selectedMetricsRecord.metrics.detectionText }}</pre>
         <pre v-if="selectedMetricsRecord?.metrics?.miouTable">{{ selectedMetricsRecord.metrics.miouTable }}</pre>
-        <pre>{{ metricsJson }}</pre>
       </div>
     </Modal>
   </div>
@@ -125,8 +125,6 @@
     if (!record) return '';
     return `Id ${record.id} / ${record.name || ''}`;
   });
-
-  const metricsJson = computed(() => JSON.stringify(selectedMetricsRecord.value?.metrics || {}, null, 2));
 
   const datasetTypes = computed(() => {
     if (props.datasetType === datasetTypeEnum.IMAGE) return datasetTypeEnum.IMAGE;

@@ -323,7 +323,6 @@ def write_converter_helper(helper_path: Path) -> None:
         '        "keep_empty_seg": True,',
         '        "lidarseg_only": True,',
         '        "gen_occ": True,',
-        '        "use_conch": True,',
         "    })",
         "create_per2_infos(args.root, args.prefix, max_sweeps=0, **options)",
         "",
@@ -501,14 +500,59 @@ def predictions_from_outputs(outputs_path: Path, data_ids: list[int], class_name
     return predictions
 
 
+def compact_detection_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    per_class = []
+    labels = summary.get("mean_dist_aps") or {}
+    label_errors = summary.get("label_tp_errors") or {}
+    for name, ap in labels.items():
+        errors = label_errors.get(name) or {}
+        per_class.append({
+            "className": name,
+            "AP": ap,
+            "ATE": errors.get("trans_err"),
+            "ASE": errors.get("scale_err"),
+            "AOE": errors.get("orient_err"),
+            "AVE": errors.get("vel_err"),
+            "AAE": errors.get("attr_err"),
+        })
+    tp_errors = summary.get("tp_errors") or {}
+    return {
+        "mAP": summary.get("mean_ap"),
+        "mATE": tp_errors.get("trans_err"),
+        "mASE": tp_errors.get("scale_err"),
+        "mAOE": tp_errors.get("orient_err"),
+        "mAVE": tp_errors.get("vel_err"),
+        "mAAE": tp_errors.get("attr_err"),
+        "NDS": summary.get("nd_score"),
+        "perClass": per_class,
+    }
+
+
+def format_detection_metrics(metrics: dict[str, Any]) -> str:
+    lines = []
+    for key in ("mAP", "mATE", "mASE", "mAOE", "mAVE", "mAAE", "NDS"):
+        value = metrics.get(key)
+        if isinstance(value, (int, float)):
+            lines.append(f"{key}: {value:.4f}")
+    per_class = metrics.get("perClass") or []
+    if per_class:
+        lines.append("Per-class results:")
+        lines.append("Object Class\tAP\tATE\tASE\tAOE\tAVE\tAAE")
+        for row in per_class:
+            values = [row.get(k) for k in ("AP", "ATE", "ASE", "AOE", "AVE", "AAE")]
+            formatted = ["-" if v is None else f"{float(v):.3f}" for v in values]
+            lines.append(f"{row.get('className')}\t" + "\t".join(formatted))
+    return "\n".join(lines)
+
+
 def parse_metrics(stdout: str, work_dir: Path) -> dict[str, Any]:
-    metrics: dict[str, Any] = {"raw": stdout[-20000:]}
+    metrics: dict[str, Any] = {}
     summary = work_dir / "results" / "metrics_summary.json"
     if summary.exists():
         data = json.loads(summary.read_text(encoding="utf-8"))
-        metrics["mAP"] = data.get("mean_ap")
-        metrics["NDS"] = data.get("nd_score")
-        metrics["detection"] = data
+        detection = compact_detection_metrics(data)
+        metrics.update(detection)
+        metrics["detectionText"] = format_detection_metrics(detection)
     occ_file = work_dir / "results" / "occ_eval_results.txt"
     if occ_file.exists():
         text = occ_file.read_text(encoding="utf-8", errors="ignore")
