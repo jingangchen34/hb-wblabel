@@ -295,7 +295,6 @@ def write_converter_helper(helper_path: Path) -> None:
         "args = parser.parse_args()",
         "",
         "sys.path.insert(0, args.fusiondet_root)",
-        "sys.path.insert(0, args.fusiondet_root + \"/tools\")",
         "from tools.data_converter.sanet_per2_converter import create_per2_infos",
         "",
         'metrics = set(args.metrics.split(","))',
