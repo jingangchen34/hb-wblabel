@@ -121,7 +121,7 @@ def fetch_file_paths(file_ids: list[int]) -> dict[int, dict[str, str]]:
 def fetch_gt_objects(data_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
     rows = mysql_rows(
         "SELECT data_id,class_attributes FROM data_annotation_object "
-        f"WHERE data_id IN ({sql_list(data_ids)}) AND source_id=-1 AND is_deleted=0"
+        f"WHERE data_id IN ({sql_list(data_ids)}) AND source_id=-1"
     )
     result: dict[int, list[dict[str, Any]]] = {}
     for data_id, attrs in rows:
