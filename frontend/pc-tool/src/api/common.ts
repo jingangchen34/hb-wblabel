@@ -55,18 +55,18 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
             dataId,
             source,
             color: source === 'GT' ? '#22c55e' : '#ef4444',
-            classType: raw.classType || raw.modelClass || raw.label,
-            modelClass: raw.modelClass || raw.label || raw.classType,
+            classType: raw.classType || raw.modelClass || raw.label || raw.meta?.classType,
+            modelClass: raw.modelClass || raw.label || raw.classType || raw.meta?.classType,
             modelConfidence: raw.modelConfidence ?? raw.confidence,
             trackId: raw.trackId || raw.trackID || `${source}-${index}`,
             trackID: raw.trackID || raw.trackId || `${source}-${index}`,
             trackName: raw.trackName || raw.displayText || (source === 'PRED' && (raw.modelConfidence ?? raw.confidence) !== undefined
-                ? `${raw.modelClass || raw.label || raw.classType} ${Number(raw.modelConfidence ?? raw.confidence).toFixed(2)}`
+                ? `${raw.modelClass || raw.label || raw.classType || raw.meta?.classType || 'unknown'} ${Number(raw.modelConfidence ?? raw.confidence).toFixed(2)}`
                 : undefined),
         };
     }
     const box = raw.box || raw;
-    const label = raw.modelClass || raw.label || raw.classType || 'unknown';
+    const label = raw.modelClass || raw.label || raw.classType || raw.meta?.classType || 'unknown';
     const confidence = raw.modelConfidence ?? raw.confidence;
     const dz = Number(box.dz ?? box.zSize ?? 0);
     return {
@@ -112,10 +112,10 @@ async function getEvaluationObjectsMap(evaluationId: string | number, dataIds: s
         dataIds.map(async (dataId) => {
             const compare = await getModelEvaluationCompare(evaluationId, dataId);
             const gt = (compare?.groundTruths || []).map((item: any, index: number) =>
-                normalizeEvaluationObject(item, dataId, 'GT', index),
+                utils.translateToObject(normalizeEvaluationObject(item, dataId, 'GT', index)),
             );
             const pred = (compare?.predictions || []).map((item: any, index: number) =>
-                normalizeEvaluationObject(item, dataId, 'PRED', index),
+                utils.translateToObject(normalizeEvaluationObject(item, dataId, 'PRED', index)),
             );
             return [dataId, [...gt, ...pred]] as const;
         }),
