@@ -568,14 +568,16 @@ def parse_metrics(stdout: str, work_dir: Path) -> dict[str, Any]:
     return metrics
 
 
-def load_dim_cfg_options(load_dim: int | None, metrics: list[str]) -> list[str]:
-    if not load_dim:
-        return []
+def eval_cfg_options(load_dim: int | None, metrics: list[str]) -> list[str]:
     options = [
-        f"data.test.pipeline.0.load_dim={load_dim}",
+        "data.test.pipeline.0.conch=False",
     ]
+    if load_dim:
+        options.append(f"data.test.pipeline.0.load_dim={load_dim}")
     if "miou" in metrics:
-        options.append(f"data.test.occ_pipeline.0.load_dim={load_dim}")
+        options.append("data.test.occ_pipeline.0.conch=False")
+        if load_dim:
+            options.append(f"data.test.occ_pipeline.0.load_dim={load_dim}")
     return options
 
 
@@ -626,7 +628,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         "--checkpoint", checkpoint_path,
         "--eval", *metrics,
         "--out", str(outputs_path),
-        "--cfg-options", f"data.test.ann_file={ann_file}", *load_dim_cfg_options(load_dim, metrics),
+        "--cfg-options", f"data.test.ann_file={ann_file}", *eval_cfg_options(load_dim, metrics),
         "--eval-options", f"jsonfile_prefix={result_prefix}", f"save_dir={result_prefix}",
     ]
     helper_env = os.environ.copy()
