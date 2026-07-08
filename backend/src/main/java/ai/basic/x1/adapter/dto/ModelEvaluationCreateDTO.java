@@ -26,6 +26,8 @@ public class ModelEvaluationCreateDTO {
 
     private List<String> metrics;
 
+    private Integer loadDim;
+
     @Valid
     private ModelRunFilterDataDTO dataFilterParam;
 }

@@ -23,6 +23,8 @@ public class ModelEvaluationCreateBO {
 
     private List<String> metrics;
 
+    private Integer loadDim;
+
     private Long createdBy;
 
     private ModelRunFilterDataBO dataFilterParam;

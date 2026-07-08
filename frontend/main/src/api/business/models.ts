@@ -256,6 +256,7 @@ export const createModelEvaluationApi = (params: {
   configPath?: string;
   checkpointPath?: string;
   metrics?: string[];
+  loadDim?: number;
   dataFilterParam?: DataModelParam;
 }) =>
   defHttp.post<number>({

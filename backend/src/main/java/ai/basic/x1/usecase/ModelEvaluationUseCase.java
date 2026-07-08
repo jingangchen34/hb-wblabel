@@ -89,7 +89,7 @@ public class ModelEvaluationUseCase {
                 .createdBy(createBO.getCreatedBy())
                 .build();
         modelEvaluationRecordDAO.save(record);
-        EXECUTOR.execute(() -> runEvaluation(record.getId(), frameIds, resolveMetrics(createBO), createBO.getCreatedBy()));
+        EXECUTOR.execute(() -> runEvaluation(record.getId(), frameIds, resolveMetrics(createBO), createBO.getLoadDim(), createBO.getCreatedBy()));
         return record.getId();
     }
 
@@ -223,7 +223,7 @@ public class ModelEvaluationUseCase {
         return frameIds.stream().distinct().collect(Collectors.toList());
     }
 
-    private void runEvaluation(Long evaluationId, List<Long> frameIds, List<String> metrics, Long userId) {
+    private void runEvaluation(Long evaluationId, List<Long> frameIds, List<String> metrics, Integer loadDim, Long userId) {
         updateStatus(evaluationId, RunStatusEnum.RUNNING, null, userId);
         var record = modelEvaluationRecordDAO.getById(evaluationId);
         var request = new JSONObject();
@@ -234,6 +234,9 @@ public class ModelEvaluationUseCase {
         request.set("configPath", record.getConfigPath());
         request.set("checkpointPath", record.getCheckpointPath());
         request.set("metrics", metrics);
+        if (loadDim != null) {
+            request.set("loadDim", loadDim);
+        }
         try {
             var response = HttpRequest.post(evaluationUrl)
                     .body(JSONUtil.toJsonStr(request), ContentType.JSON.getValue())

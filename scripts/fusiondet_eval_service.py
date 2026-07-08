@@ -524,6 +524,17 @@ def parse_metrics(stdout: str, work_dir: Path) -> dict[str, Any]:
     return metrics
 
 
+def load_dim_cfg_options(load_dim: int | None, metrics: list[str]) -> list[str]:
+    if not load_dim:
+        return []
+    options = [
+        f"data.test.pipeline.0.load_dim={load_dim}",
+    ]
+    if "miou" in metrics:
+        options.append(f"data.test.occ_pipeline.0.load_dim={load_dim}")
+    return options
+
+
 def write_test_runner(runner_path: Path) -> None:
     runner = [
         "#!/usr/bin/env python3",
@@ -550,6 +561,8 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     data_ids = [int(x) for x in payload.get("dataIds", [])]
     config_path = str(payload.get("configPath") or "configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py")
     checkpoint_path = str(payload.get("checkpointPath") or "work_dirs/occ/epoch_20_ema.pth")
+    raw_load_dim = payload.get("loadDim")
+    load_dim = int(raw_load_dim) if raw_load_dim not in (None, "") else None
     metrics = [str(metric) for metric in payload.get("metrics") or ["mAP", "miou"] if str(metric) in {"mAP", "miou"}]
     if not metrics:
         metrics = ["mAP", "miou"]
@@ -569,7 +582,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         "--checkpoint", checkpoint_path,
         "--eval", *metrics,
         "--out", str(outputs_path),
-        "--cfg-options", f"data.test.ann_file={ann_file}",
+        "--cfg-options", f"data.test.ann_file={ann_file}", *load_dim_cfg_options(load_dim, metrics),
         "--eval-options", f"jsonfile_prefix={result_prefix}", f"save_dir={result_prefix}",
     ]
     helper_env = os.environ.copy()
@@ -598,7 +611,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         class_names = None
     predictions = predictions_from_outputs(outputs_path, ordered_data_ids, class_names)
     return {
-        "metrics": {**parse_metrics(completed.stdout, work_dir), "requested": metrics},
+        "metrics": {**parse_metrics(completed.stdout, work_dir), "requested": metrics, "loadDim": load_dim},
         "miouDataCount": miou_count,
         "outputPath": str(outputs_path),
         "logPath": str(log_path),

@@ -52,6 +52,9 @@
             <Checkbox value="miou">mIoU</Checkbox>
           </Checkbox.Group>
         </Form.Item>
+        <Form.Item label="Point Load Dim">
+          <InputNumber v-model:value="evaluateForm.loadDim" :min="1" :max="16" :precision="0" />
+        </Form.Item>
         <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
     </Modal>
@@ -66,7 +69,7 @@
 </template>
 <script lang="tsx" setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue';
-  import { Checkbox, Form, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
+  import { Checkbox, Form, InputNumber, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
   import { Button } from '/@@/Button';
   import { getDateTime } from '/@/utils/business/timeFormater';
   import {
@@ -100,6 +103,7 @@
     datasetIds: [] as number[],
     splitType: 'TEST',
     metrics: ['mAP', 'miou'] as string[],
+    loadDim: 6 as number | undefined,
   });
 
   const statusColor = {
@@ -288,6 +292,7 @@
         datasetIds: evaluateForm.datasetIds,
         modelId: Number(props.modelId),
         metrics: evaluateForm.metrics,
+        loadDim: evaluateForm.loadDim,
         dataFilterParam: {
           dataCountRatio: 100,
           isExcludeModelData: false,
