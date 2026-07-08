@@ -113,7 +113,7 @@ def fetch_file_paths(file_ids: list[int]) -> dict[int, dict[str, str]]:
         return {}
     rows = mysql_rows(
         "SELECT id,name,path FROM file "
-        f"WHERE id IN ({sql_list(file_ids)}) AND is_deleted=0"
+        f"WHERE id IN ({sql_list(file_ids)})"
     )
     return {int(row[0]): {"name": row[1], "path": row[2]} for row in rows}
 
