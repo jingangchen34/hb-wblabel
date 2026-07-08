@@ -406,6 +406,7 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
     ]
     helper_env = os.environ.copy()
     helper_env.setdefault("NUMBA_DISABLE_CACHE", "1")
+    helper_env["NUMBA_CACHE_DIR"] = str(out_dir / "numba_cache")
     completed = subprocess.run(
         cmd,
         cwd=str(FUSIONDET_ROOT),
@@ -529,6 +530,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     helper_env = os.environ.copy()
     helper_env.setdefault("NUMBA_DISABLE_CACHE", "1")
+    helper_env["NUMBA_CACHE_DIR"] = str(work_dir / "numba_cache")
     completed = subprocess.run(
         cmd,
         cwd=str(FUSIONDET_ROOT),
