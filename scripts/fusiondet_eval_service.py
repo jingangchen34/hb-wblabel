@@ -295,6 +295,7 @@ def write_converter_helper(helper_path: Path) -> None:
         "args = parser.parse_args()",
         "",
         "sys.path.insert(0, args.fusiondet_root)",
+        "sys.path.insert(0, args.fusiondet_root + \"/tools\")",
         "from tools.data_converter.sanet_per2_converter import create_per2_infos",
         "",
         'metrics = set(args.metrics.split(","))',
@@ -404,7 +405,16 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
         "--prefix", prefix,
         "--metrics", ",".join(metrics),
     ]
-    completed = subprocess.run(cmd, cwd=str(FUSIONDET_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+    helper_env = os.environ.copy()
+    helper_env.setdefault("NUMBA_DISABLE_CACHE", "1")
+    completed = subprocess.run(
+        cmd,
+        cwd=str(FUSIONDET_ROOT),
+        text=True,
+        capture_output=True,
+        timeout=RUN_TIMEOUT_SEC,
+        env=helper_env,
+    )
     (out_dir / "build_infos.log").write_text(
         "$ " + " ".join(cmd) + "\n\nSTDOUT:\n" + completed.stdout + "\n\nSTDERR:\n" + completed.stderr,
         encoding="utf-8",
@@ -518,7 +528,16 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         "--cfg-options", f"data.test.ann_file={ann_file}",
         "--eval-options", f"jsonfile_prefix={result_prefix}", f"save_dir={result_prefix}",
     ]
-    completed = subprocess.run(cmd, cwd=str(FUSIONDET_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+    helper_env = os.environ.copy()
+    helper_env.setdefault("NUMBA_DISABLE_CACHE", "1")
+    completed = subprocess.run(
+        cmd,
+        cwd=str(FUSIONDET_ROOT),
+        text=True,
+        capture_output=True,
+        timeout=RUN_TIMEOUT_SEC,
+        env=helper_env,
+    )
     log_path.write_text("$ " + " ".join(cmd) + "\n\nSTDOUT:\n" + completed.stdout + "\n\nSTDERR:\n" + completed.stderr, encoding="utf-8")
     if completed.returncode != 0:
         raise RuntimeError(f"Evaluation failed, see {log_path}: {completed.stderr[-1000:]}")
