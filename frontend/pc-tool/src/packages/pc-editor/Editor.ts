@@ -287,11 +287,12 @@ export default class Editor extends THREE.EventDispatcher {
             let userData = this.getObjectUserData(obj);
             let classConfig = this.getClassType(userData);
 
+            const displayColor = (userData as any).color || (classConfig ? classConfig.color : '#ffffff');
             if (obj instanceof Box) {
                 // obj.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
-                obj.color.setStyle(classConfig ? classConfig.color : '#ffffff');
+                obj.color.setStyle(displayColor);
             } else {
-                obj.color = classConfig ? classConfig.color : '#ffffff';
+                obj.color = displayColor;
             }
 
             // obj.dashed = !!userData.invisibleFlag;

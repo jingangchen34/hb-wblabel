@@ -87,8 +87,12 @@ export default class BusinessManager extends BaseBusinessManager {
         classificationMap: Record<string, IObject[]>;
         queryTime: string;
     }> {
+        const evaluationId = this.editor.bsState.query.showEvaluation
+            ? this.editor.bsState.query.evaluationId
+            : undefined;
         let data = await api.getDataObjectBatch(
             Array.isArray(frame) ? frame.map((e) => e.id) : frame.id,
+            evaluationId,
         );
         return data;
     }

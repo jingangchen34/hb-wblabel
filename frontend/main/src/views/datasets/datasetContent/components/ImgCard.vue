@@ -373,6 +373,10 @@
     if (isFrame) {
       params.dataType = 'frame';
     }
+    if (query.evaluationId) {
+      params.evaluationId = query.evaluationId;
+      params.showEvaluation = query.showEvaluation || 1;
+    }
     goToTool(params, props.info?.type);
   };
 

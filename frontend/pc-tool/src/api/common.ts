@@ -41,13 +41,97 @@ export async function saveObject(config: any) {
     return keyMap;
 }
 
-export async function getDataObjectBatch(dataIds: string[] | string) {
+
+export async function getModelEvaluationCompare(evaluationId: string | number, dataId: string | number) {
+    const res: any = await get(`/api/modelEvaluation/${evaluationId}/data/${dataId}/compare`);
+    return res?.data || res;
+}
+
+function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PRED', index: number): any {
+    const raw = item?.classAttributes || item || {};
+    if (raw.contour?.center3D && raw.contour?.size3D) {
+        return {
+            ...raw,
+            dataId,
+            source,
+            color: source === 'GT' ? '#22c55e' : '#ef4444',
+            classType: raw.classType || raw.modelClass || raw.label,
+            modelClass: raw.modelClass || raw.label || raw.classType,
+            modelConfidence: raw.modelConfidence ?? raw.confidence,
+            trackId: raw.trackId || raw.trackID || `${source}-${index}`,
+            trackID: raw.trackID || raw.trackId || `${source}-${index}`,
+            trackName: raw.trackName || raw.displayText || (source === 'PRED' && (raw.modelConfidence ?? raw.confidence) !== undefined
+                ? `${raw.modelClass || raw.label || raw.classType} ${Number(raw.modelConfidence ?? raw.confidence).toFixed(2)}`
+                : undefined),
+        };
+    }
+    const box = raw.box || raw;
+    const label = raw.modelClass || raw.label || raw.classType || 'unknown';
+    const confidence = raw.modelConfidence ?? raw.confidence;
+    const dz = Number(box.dz ?? box.zSize ?? 0);
+    return {
+        id: raw.id || `${source}-${dataId}-${index}`,
+        frontId: raw.frontId || raw.id || `${source}-${dataId}-${index}`,
+        type: '3D_BOX',
+        source,
+        color: source === 'GT' ? '#22c55e' : '#ef4444',
+        modelClass: label,
+        classType: label,
+        modelConfidence: confidence,
+        trackId: raw.trackId || raw.trackID || `${source}-${index}`,
+        trackID: raw.trackID || raw.trackId || `${source}-${index}`,
+        trackName: raw.trackName || raw.displayText || (source === 'PRED' && confidence !== undefined
+            ? `${label} ${Number(confidence).toFixed(2)}`
+            : label),
+        classValues: [],
+        contour: {
+            pointN: raw.pointN || 0,
+            points: [],
+            center3D: {
+                x: Number(box.x ?? 0),
+                y: Number(box.y ?? 0),
+                z: Number(box.z ?? 0) + (source === 'PRED' ? dz / 2 : 0),
+            },
+            size3D: {
+                x: Number(box.dx ?? box.xSize ?? 0),
+                y: Number(box.dy ?? box.ySize ?? 0),
+                z: dz,
+            },
+            rotation3D: {
+                x: 0,
+                y: 0,
+                z: Number(box.yaw ?? box.rotZ ?? 0),
+            },
+        },
+        meta: { isProjection: false },
+    };
+}
+
+async function getEvaluationObjectsMap(evaluationId: string | number, dataIds: string[]) {
+    const entries = await Promise.all(
+        dataIds.map(async (dataId) => {
+            const compare = await getModelEvaluationCompare(evaluationId, dataId);
+            const gt = (compare?.groundTruths || []).map((item: any, index: number) =>
+                normalizeEvaluationObject(item, dataId, 'GT', index),
+            );
+            const pred = (compare?.predictions || []).map((item: any, index: number) =>
+                normalizeEvaluationObject(item, dataId, 'PRED', index),
+            );
+            return [dataId, [...gt, ...pred]] as const;
+        }),
+    );
+    return entries.reduce((map, [dataId, objects]) => {
+        map[dataId] = objects;
+        return map;
+    }, {} as Record<string, any[]>);
+}
+export async function getDataObjectBatch(dataIds: string[] | string, evaluationId?: string | number) {
     if (!Array.isArray(dataIds)) dataIds = [dataIds];
     const batchSize = 200;
     const requests: ReturnType<typeof getDataObject>[] = [];
     while (dataIds.length > 0) {
         const batchIds = dataIds.splice(0, batchSize);
-        requests.push(getDataObject(batchIds));
+        requests.push(getDataObject(batchIds, evaluationId));
     }
     return Promise.all(requests).then((res) => {
         return res.reduce(
@@ -61,7 +145,7 @@ export async function getDataObjectBatch(dataIds: string[] | string) {
     });
 }
 
-export async function getDataObject(dataIds: string[] | string) {
+export async function getDataObject(dataIds: string[] | string, evaluationId?: string | number) {
     if (!Array.isArray(dataIds)) dataIds = [dataIds];
 
     let url = '/api/annotate/data/listByDataIds';
@@ -86,6 +170,9 @@ export async function getDataObject(dataIds: string[] | string) {
             );
         }, {});
     });
+    if (evaluationId) {
+        objectsMap = await getEvaluationObjectsMap(evaluationId, dataIds);
+    }
     return {
         objectsMap,
         classificationMap,

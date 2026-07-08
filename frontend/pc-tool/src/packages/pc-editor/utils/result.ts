@@ -172,6 +172,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.modelClass = obj.modelClass || '';
         userData.modelRun = obj.modelRun || '';
         userData.modelRunLabel = obj.modelRunLabel || '';
+        (userData as any).color = obj.color;
         userData.sourceId = obj.sourceId;
         userData.sourceType = obj.sourceType;
         userData.attrs = obj.attrs || {};
@@ -184,7 +185,9 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
 
             let box = createUtils.createAnnotate3D(editor, position, scale, rotation, userData);
             // if (obj.frontId) box.uuid = obj.frontId;
-            if (classConfig) {
+            if (obj.color) {
+                box.color.setStyle(obj.color);
+            } else if (classConfig) {
                 box.color.setStyle(classConfig.color);
                 // box.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
             }
@@ -197,7 +200,8 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             let rect = createUtils.createAnnotateRect(editor, center, size, userData);
 
             rect.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
-            if (classConfig) rect.color = classConfig.color;
+            if (obj.color) rect.color = obj.color;
+            else if (classConfig) rect.color = classConfig.color;
             bindInfo(rect, obj);
             annotates.push(rect);
         } else if (objType === ObjectType.TYPE_2D_BOX || objType === ObjectType.TYPE_BOX2D) {
@@ -218,7 +222,8 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             );
             // if (obj.frontId) box2d.uuid = obj.frontId;
             box2d.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
-            if (classConfig) box2d.color = classConfig.color;
+            if (obj.color) box2d.color = obj.color;
+            else if (classConfig) box2d.color = classConfig.color;
             bindInfo(box2d, obj);
             annotates.push(box2d);
         }
