@@ -524,6 +524,27 @@ def parse_metrics(stdout: str, work_dir: Path) -> dict[str, Any]:
     return metrics
 
 
+def write_test_runner(runner_path: Path) -> None:
+    runner = [
+        "#!/usr/bin/env python3",
+        "import argparse",
+        "import runpy",
+        "import sys",
+        "",
+        "parser = argparse.ArgumentParser(add_help=False)",
+        'parser.add_argument("--fusiondet-root", required=True)',
+        'parser.add_argument("--test-script", required=True)',
+        "args, rest = parser.parse_known_args()",
+        "sys.path = [p for p in sys.path if not p.endswith('/tools')]",
+        "if args.fusiondet_root not in sys.path:",
+        "    sys.path.insert(0, args.fusiondet_root)",
+        "sys.argv = [args.test_script] + rest",
+        "runpy.run_path(args.test_script, run_name='__main__')",
+        "",
+    ]
+    runner_path.write_text("\n".join(runner), encoding="utf-8")
+
+
 def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     evaluation_id = int(payload["evaluationId"])
     data_ids = [int(x) for x in payload.get("dataIds", [])]
@@ -537,9 +558,13 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     outputs_path = work_dir / f"eval_{evaluation_id}_outputs.pkl"
     log_path = work_dir / "eval.log"
     result_prefix = work_dir / "results"
+    runner_path = work_dir / "run_test.py"
+    write_test_runner(runner_path)
     cmd = [
         PYTHON_BIN,
-        str(TEST_SCRIPT),
+        str(runner_path),
+        "--fusiondet-root", str(FUSIONDET_ROOT),
+        "--test-script", str(TEST_SCRIPT),
         config_path,
         "--checkpoint", checkpoint_path,
         "--eval", *metrics,
