@@ -266,7 +266,7 @@ public class ModelEvaluationUseCase {
         modelEvaluationRecordDAO.updateById(ModelEvaluationRecord.builder()
                 .id(id)
                 .status(status)
-                .errorReason(StrUtil.maxLength(errorReason, 1024))
+                .errorReason(StrUtil.maxLength(errorReason, 512))
                 .updatedBy(userId)
                 .build());
     }
