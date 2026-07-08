@@ -9,7 +9,9 @@ existing evaluation script, and returns metrics plus predictions for platform UI
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import os
 import pickle
 import subprocess
@@ -32,8 +34,8 @@ def env(name: str, default: str) -> str:
 FUSIONDET_ROOT = Path(env("FUSIONDET_ROOT", "/home/user/cjg/code/fusiondet"))
 PYTHON_BIN = env("FUSIONDET_EVAL_PYTHON", sys.executable)
 TEST_SCRIPT = Path(env("FUSIONDET_TEST_SCRIPT", str(FUSIONDET_ROOT / "tools/test.py")))
-BASE_INFO_PKL = Path(env("FUSIONDET_BASE_INFO_PKL", str(FUSIONDET_ROOT / "dataset/xinchi_infos_val.pkl")))
 WORK_ROOT = Path(env("FUSIONDET_PLATFORM_EVAL_ROOT", str(FUSIONDET_ROOT / "work_dirs/platform_eval")))
+EXTERNAL_DATA_ROOT = Path(env("EXTERNAL_DATA_ROOT", "/home/user/cjg/conch_data"))
 MYSQL_BIN = env("MYSQL_BIN", "mysql")
 MYSQL_DOCKER_CONTAINER = env("MYSQL_DOCKER_CONTAINER", "hb-wblabel-mysql-1")
 MYSQL_HOST = env("XTREME1_MYSQL_HOST", "127.0.0.1")
@@ -42,6 +44,7 @@ MYSQL_USER = env("XTREME1_MYSQL_USER", "xtreme1")
 MYSQL_PASSWORD = env("XTREME1_MYSQL_PASSWORD", "Rc4K3L6f")
 MYSQL_DATABASE = env("XTREME1_MYSQL_DATABASE", "xtreme1")
 RUN_TIMEOUT_SEC = int(env("FUSIONDET_EVAL_TIMEOUT_SEC", "21600"))
+CAMERA_PREFIXES = ("image_", "camera_")
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, body: Any) -> None:
@@ -91,16 +94,34 @@ def sql_list(ids: list[int]) -> str:
 
 def fetch_platform_frames(data_ids: list[int]) -> dict[int, dict[str, Any]]:
     rows = mysql_rows(
-        "SELECT id,name,parent_id FROM data "
+        "SELECT id,name,parent_id,content FROM data "
         f"WHERE id IN ({sql_list(data_ids)}) AND type='SINGLE_DATA' AND is_deleted=0"
     )
-    return {int(row[0]): {"id": int(row[0]), "name": row[1], "parentId": int(row[2])} for row in rows}
+    frames = {}
+    for row in rows:
+        frames[int(row[0])] = {
+            "id": int(row[0]),
+            "name": row[1],
+            "parentId": int(row[2]),
+            "content": json.loads(row[3] or "[]"),
+        }
+    return frames
+
+
+def fetch_file_paths(file_ids: list[int]) -> dict[int, dict[str, str]]:
+    if not file_ids:
+        return {}
+    rows = mysql_rows(
+        "SELECT id,name,path FROM file "
+        f"WHERE id IN ({sql_list(file_ids)}) AND is_deleted=0"
+    )
+    return {int(row[0]): {"name": row[1], "path": row[2]} for row in rows}
 
 
 def fetch_gt_objects(data_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
     rows = mysql_rows(
         "SELECT data_id,class_attributes FROM data_annotation_object "
-        f"WHERE data_id IN ({sql_list(data_ids)}) AND source_id=-1"
+        f"WHERE data_id IN ({sql_list(data_ids)}) AND source_id=-1 AND is_deleted=0"
     )
     result: dict[int, list[dict[str, Any]]] = {}
     for data_id, attrs in rows:
@@ -109,32 +130,6 @@ def fetch_gt_objects(data_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
         except json.JSONDecodeError:
             continue
     return result
-
-
-def token_candidates(platform_name: str) -> set[str]:
-    name = platform_name
-    if name.startswith("LIDAR_"):
-        name = name[6:]
-    return {platform_name, name, f"LIDAR_{name}"}
-
-
-def load_base_infos() -> dict[str, Any]:
-    with BASE_INFO_PKL.open("rb") as f:
-        return pickle.load(f)
-
-
-def index_infos(infos: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    index: dict[str, dict[str, Any]] = {}
-    for info in infos:
-        values = [str(info.get("token", "")), Path(str(info.get("lidar_path", ""))).stem]
-        for value in values:
-            if value:
-                index[value] = info
-                if value.startswith("LIDAR_"):
-                    index[value[6:]] = info
-                else:
-                    index[f"LIDAR_{value}"] = info
-    return index
 
 
 def object_to_box(obj: dict[str, Any]) -> tuple[list[float], str, int]:
@@ -154,59 +149,273 @@ def object_to_box(obj: dict[str, Any]) -> tuple[list[float], str, int]:
     return box, str(obj.get("modelClass") or obj.get("label") or "unknown"), int(contour.get("pointN") or 1)
 
 
-def apply_platform_gt(info: dict[str, Any], objects: list[dict[str, Any]]) -> dict[str, Any]:
-    import numpy as np
-
-    copied = dict(info)
-    boxes, names, num_pts = [], [], []
-    for obj in objects:
-        box, name, points = object_to_box(obj)
-        boxes.append(box)
-        names.append(name)
-        num_pts.append(points)
-    copied["gt_boxes"] = np.asarray(boxes, dtype=np.float32).reshape((-1, 7))
-    copied["gt_names"] = np.asarray(names)
-    copied["num_lidar_pts"] = np.asarray(num_pts, dtype=np.int32)
-    copied["gt_velocity"] = np.zeros((len(boxes), 2), dtype=np.float32)
-    copied["valid_flag"] = np.ones((len(boxes),), dtype=bool)
-    return copied
+def yaw_to_quaternion(yaw: float) -> list[float]:
+    return [math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]
 
 
-def build_eval_pkl(evaluation_id: int, data_ids: list[int]) -> tuple[Path, list[int], int]:
+def object_to_annotation(obj: dict[str, Any]) -> dict[str, Any]:
+    box, name, points = object_to_box(obj)
+    return {
+        "translation": box[:3],
+        "size": box[3:6],
+        "rotation": yaw_to_quaternion(box[6]),
+        "category": name,
+        "sub_category": "",
+        "velocity": [0.0, 0.0, 0.0],
+        "num_lidar_pts": max(points, 1),
+        "num_radar_pts": 0,
+    }
+
+
+def ensure_link_or_copy(source: Path, target: Path) -> None:
+    if target.exists() or target.is_symlink():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.symlink_to(source, target_is_directory=source.is_dir())
+    except OSError:
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target)
+
+
+def collect_content_file_ids(content: list[dict[str, Any]]) -> list[int]:
+    ids: list[int] = []
+    for item in content:
+        if item.get("type") == "file" and item.get("fileId"):
+            ids.append(int(item["fileId"]))
+        for file_item in item.get("files") or []:
+            if file_item.get("fileId"):
+                ids.append(int(file_item["fileId"]))
+    return ids
+
+
+def first_content_file(item: dict[str, Any], files: dict[int, dict[str, str]]) -> dict[str, str] | None:
+    if item.get("type") == "file" and item.get("fileId"):
+        return files.get(int(item["fileId"]))
+    for file_item in item.get("files") or []:
+        if file_item.get("fileId"):
+            found = files.get(int(file_item["fileId"]))
+            if found:
+                return found
+    return None
+
+
+def frame_source_files(frame: dict[str, Any], files: dict[int, dict[str, str]]) -> dict[str, Any]:
+    source: dict[str, Any] = {"cameras": {}}
+    for item in frame["content"]:
+        name = str(item.get("name") or "")
+        file_info = first_content_file(item, files)
+        if not file_info:
+            continue
+        path = Path(file_info["path"])
+        if name == "point_cloud" or path.suffix == ".bin":
+            source["lidar"] = path
+        elif name == "camera_config" or path.name in {"calib.json", "calib_cylindrical.json"}:
+            source["calib"] = path
+        elif path.name == "pose.json":
+            source["pose"] = path
+        elif name.startswith(CAMERA_PREFIXES):
+            source["cameras"][name] = path
+    if "lidar" not in source:
+        raise RuntimeError(f"Cannot find point cloud file for platform dataId={frame['id']}")
+    return source
+
+
+def resolve_external_path(path: Path) -> Path:
+    return path if path.is_absolute() else EXTERNAL_DATA_ROOT / path
+
+
+def infer_clip_root(lidar_rel_path: Path) -> Path:
+    parts = list(lidar_rel_path.parts)
+    if "lidars" not in parts:
+        raise RuntimeError(f"Cannot infer clip root from lidar path: {lidar_rel_path}")
+    return Path(*parts[:parts.index("lidars")])
+
+
+def camera_key(group_name: str, rel_path: Path) -> str:
+    if group_name.startswith("image_"):
+        return group_name.split("_", 2)[2]
+    if group_name.startswith("camera_"):
+        return group_name.split("_", 1)[1]
+    parts = list(rel_path.parts)
+    if "cameras" in parts:
+        index = parts.index("cameras")
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    return rel_path.parent.name
+
+
+def timestamp_from_lidar_name(name: str) -> str:
+    stem = Path(name).stem
+    return stem[6:] if stem.startswith("LIDAR_") else stem
+
+
+def frame_obstacle_entry(
+    frame: dict[str, Any],
+    source: dict[str, Any],
+    clip_root: Path,
+    gt_objects: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    lidar_rel = source["lidar"].relative_to(clip_root)
+    timestamp = timestamp_from_lidar_name(source["lidar"].name)
+    cam_files = {}
+    for group_name, camera_path in sorted(source["cameras"].items()):
+        rel = camera_path.relative_to(clip_root)
+        cam_files[camera_key(group_name, rel)] = {
+            "cam_file": rel.as_posix(),
+            "cylindrical_cam_file": rel.as_posix(),
+            "ego_time": Path(camera_path).stem,
+        }
+    return timestamp, {
+        "FrameID": Path(source["lidar"]).stem,
+        "filepath": lidar_rel.as_posix(),
+        "timestamp": timestamp,
+        "ego_file": timestamp,
+        "cam_files": cam_files,
+        "annotations": [object_to_annotation(obj) for obj in gt_objects],
+        "prev_time_file": "",
+        "next_time_file": "",
+        "platform_data_id": frame["id"],
+    }
+
+
+def write_converter_helper(helper_path: Path) -> None:
+    helper = [
+        "#!/usr/bin/env python3",
+        "import argparse",
+        "import sys",
+        "",
+        "parser = argparse.ArgumentParser()",
+        'parser.add_argument("--fusiondet-root", required=True)',
+        'parser.add_argument("--root", required=True)',
+        'parser.add_argument("--prefix", required=True)',
+        'parser.add_argument("--metrics", default="mAP")',
+        "args = parser.parse_args()",
+        "",
+        "sys.path.insert(0, args.fusiondet_root)",
+        "from tools.data_converter.sanet_per2_converter import create_per2_infos",
+        "",
+        'metrics = set(args.metrics.split(","))',
+        'options = {"dataset": "conch", "keep_empty": True, "class_map": None}',
+        'if "miou" in metrics:',
+        "    options.update({",
+        '        "task": "occ",',
+        '        "keep_empty_seg": True,',
+        '        "lidarseg_only": True,',
+        '        "gen_occ": True,',
+        '        "use_conch": True,',
+        "    })",
+        "create_per2_infos(args.root, args.prefix, max_sweeps=0, **options)",
+        "",
+    ]
+    helper_path.write_text("\n".join(helper), encoding="utf-8")
+
+
+def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) -> tuple[Path, list[int], int]:
     frames = fetch_platform_frames(data_ids)
     gt_map = fetch_gt_objects(data_ids)
-    base = load_base_infos()
-    base_infos = base.get("infos", [])
-    info_index = index_infos(base_infos)
-    selected_infos = []
-    ordered_data_ids = []
-    miou_count = 0
+    ordered_data_ids: list[int] = []
+    out_dir = WORK_ROOT / f"eval_{evaluation_id}"
+    dataset_root = out_dir / "dataset"
+    if dataset_root.exists():
+        shutil.rmtree(dataset_root)
+    dataset_root.mkdir(parents=True, exist_ok=True)
+
+    all_file_ids: list[int] = []
+    for data_id in data_ids:
+        frame = frames.get(int(data_id))
+        if frame:
+            all_file_ids.extend(collect_content_file_ids(frame["content"]))
+    files = fetch_file_paths(sorted(set(all_file_ids)))
+
+    scenes: dict[Path, dict[str, Any]] = {}
     for data_id in data_ids:
         frame = frames.get(int(data_id))
         if not frame:
             continue
-        matched = None
-        for candidate in token_candidates(frame["name"]):
-            matched = info_index.get(candidate)
-            if matched is not None:
-                break
-        if matched is None:
-            raise RuntimeError(f"Cannot map platform dataId={data_id}, name={frame['name']} to base info pkl")
-        info = apply_platform_gt(matched, gt_map.get(int(data_id), []))
-        info["platform_data_id"] = int(data_id)
-        selected_infos.append(info)
+        source = frame_source_files(frame, files)
+        clip_root = infer_clip_root(source["lidar"])
+        scene = scenes.setdefault(clip_root, {"frames": [], "sources": []})
+        scene["frames"].append(frame)
+        scene["sources"].append(source)
         ordered_data_ids.append(int(data_id))
-        if info.get("lidarseg_path") or info.get("occ_gt_path"):
-            miou_count += 1
-    out_dir = WORK_ROOT / f"eval_{evaluation_id}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    pkl_path = out_dir / f"eval_{evaluation_id}_infos.pkl"
-    payload = dict(base)
-    payload["infos"] = selected_infos
-    with pkl_path.open("wb") as f:
-        pickle.dump(payload, f)
-    return pkl_path, ordered_data_ids, miou_count
 
+    scene_names: list[str] = []
+    miou_count = 0
+    for clip_root, scene in scenes.items():
+        digest = hashlib.sha1(clip_root.as_posix().encode("utf-8")).hexdigest()[:10]
+        scene_name = f"{clip_root.name}_{digest}"
+        scene_names.append(scene_name)
+        scene_dir = dataset_root / scene_name
+        clip_abs = resolve_external_path(clip_root)
+        ensure_link_or_copy(clip_abs / "lidars", scene_dir / "lidars")
+        if (clip_abs / "cameras").exists():
+            ensure_link_or_copy(clip_abs / "cameras", scene_dir / "cameras")
+            ensure_link_or_copy(clip_abs / "cameras", scene_dir / "cameras_cylindrical")
+        calib_source = clip_abs / "calib_cylindrical.json"
+        if not calib_source.exists():
+            calib_source = clip_abs / "calib.json"
+        ensure_link_or_copy(calib_source, scene_dir / "calib_cylindrical.json")
+        ensure_link_or_copy(calib_source, scene_dir / "calib.json")
+        if (clip_abs / "pose.json").exists():
+            ensure_link_or_copy(clip_abs / "pose.json", scene_dir / "pose.json")
+        else:
+            raise RuntimeError(f"Missing pose.json for clip {clip_abs}")
+        if (clip_abs / "meta.json").exists():
+            ensure_link_or_copy(clip_abs / "meta.json", scene_dir / "meta.json")
+        if (clip_abs / "log.json").exists():
+            ensure_link_or_copy(clip_abs / "log.json", scene_dir / "log.json")
+        else:
+            (scene_dir / "log.json").write_text("{}", encoding="utf-8")
+        anno_dir = scene_dir / "anno"
+        anno_dir.mkdir(parents=True, exist_ok=True)
+        if (clip_abs / "anno" / "occ_labels").exists():
+            ensure_link_or_copy(clip_abs / "anno" / "occ_labels", anno_dir / "occ_labels")
+
+        obstacle: dict[str, Any] = {}
+        keys: list[str] = []
+        for frame, source in zip(scene["frames"], scene["sources"]):
+            key, entry = frame_obstacle_entry(frame, source, clip_root, gt_map.get(int(frame["id"]), []))
+            keys.append(key)
+            obstacle[key] = entry
+            lidar_stem = Path(source["lidar"]).stem
+            if (anno_dir / "occ_labels" / "LIDAR_CAR" / f"{lidar_stem}.label").exists():
+                miou_count += 1
+        for index, key in enumerate(keys):
+            obstacle[key]["prev_time_file"] = keys[index - 1] if index > 0 else ""
+            obstacle[key]["next_time_file"] = keys[index + 1] if index + 1 < len(keys) else ""
+        obstacle["first_frame"] = keys[0] if keys else ""
+        (anno_dir / "obstacle_3d.json").write_text(json.dumps(obstacle, ensure_ascii=False), encoding="utf-8")
+
+    train_val = {"train_file": [], "val_file": scene_names}
+    (dataset_root / "train_val.json").write_text(json.dumps(train_val, ensure_ascii=False), encoding="utf-8")
+    (dataset_root / "occ_train_val.json").write_text(json.dumps(train_val, ensure_ascii=False), encoding="utf-8")
+
+    helper_path = out_dir / "build_infos.py"
+    write_converter_helper(helper_path)
+    prefix = f"eval_{evaluation_id}"
+    cmd = [
+        PYTHON_BIN,
+        str(helper_path),
+        "--fusiondet-root", str(FUSIONDET_ROOT),
+        "--root", str(dataset_root),
+        "--prefix", prefix,
+        "--metrics", ",".join(metrics),
+    ]
+    completed = subprocess.run(cmd, cwd=str(FUSIONDET_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+    (out_dir / "build_infos.log").write_text(
+        "$ " + " ".join(cmd) + "\n\nSTDOUT:\n" + completed.stdout + "\n\nSTDERR:\n" + completed.stderr,
+        encoding="utf-8",
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"Build SANet info failed, see {out_dir / 'build_infos.log'}: {completed.stderr[-1000:]}")
+
+    pkl_path = dataset_root / f"{prefix}_infos_val.pkl"
+    if not pkl_path.exists():
+        raise RuntimeError(f"Build SANet info did not create {pkl_path}")
+    return pkl_path, ordered_data_ids, miou_count
 
 def load_outputs(path: Path) -> Any:
     try:
@@ -294,7 +503,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     metrics = [str(metric) for metric in payload.get("metrics") or ["mAP", "miou"] if str(metric) in {"mAP", "miou"}]
     if not metrics:
         metrics = ["mAP", "miou"]
-    ann_file, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids)
+    ann_file, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, metrics)
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
     outputs_path = work_dir / f"eval_{evaluation_id}_outputs.pkl"
     log_path = work_dir / "eval.log"
