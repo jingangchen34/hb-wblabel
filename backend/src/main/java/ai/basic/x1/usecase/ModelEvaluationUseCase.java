@@ -107,11 +107,7 @@ public class ModelEvaluationUseCase {
         if (record == null) {
             throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Evaluation record does not exist.");
         }
-        modelEvaluationRecordDAO.updateById(ModelEvaluationRecord.builder()
-                .id(id)
-                .isDeleted(true)
-                .updatedBy(userId)
-                .build());
+        modelEvaluationRecordDAO.getBaseMapper().softDeleteById(id, userId);
     }
 
     public ModelEvaluationCompareDTO compare(Long evaluationId, Long dataId) {
