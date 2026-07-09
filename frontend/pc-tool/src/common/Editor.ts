@@ -1,4 +1,4 @@
-import { Editor as BaseEditor, IFrame, SourceType } from 'pc-editor';
+import { Editor as BaseEditor, IFrame, SourceType, Event } from 'pc-editor';
 import { IBSState } from '../type';
 import { getDefault } from '../state';
 import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
@@ -13,6 +13,7 @@ export default class Editor extends BaseEditor {
     dataManager: DataManager;
     multiFrameMergeManager: MultiFrameMergeManager;
     bsState: IBSState = getDefault();
+    private evaluationFrameObjectsLoading?: Promise<void>;
     constructor() {
         super();
 
@@ -24,7 +25,31 @@ export default class Editor extends BaseEditor {
     async loadFrame(index: number, showLoading: boolean = true, force: boolean = false) {
         this.multiFrameMergeManager.captureDisplayLabels();
         await super.loadFrame(index, showLoading, force);
+        await this.ensureEvaluationFrameObjects();
         await this.multiFrameMergeManager.refreshDisplayForCurrentFrame();
+    }
+
+    private async ensureEvaluationFrameObjects() {
+        if (!this.bsState.query.showEvaluation || !this.state.isSeriesFrame) return;
+        const missingFrameIds = this.state.frames
+            .filter((frame) => !this.dataManager.getFrameObject(frame.id))
+            .map((frame) => frame.id);
+        if (missingFrameIds.length === 0) return;
+
+        if (!this.evaluationFrameObjectsLoading) {
+            this.evaluationFrameObjectsLoading = this.dataManager
+                .loadMissingFrameObjects(missingFrameIds)
+                .then(() => {
+                    this.loadManager.updateTrackMap(this.state.frames);
+                    if (this.currentTrack) {
+                        this.dispatchEvent({ type: Event.CURRENT_TRACK_CHANGE, data: this.currentTrack });
+                    }
+                })
+                .finally(() => {
+                    this.evaluationFrameObjectsLoading = undefined;
+                });
+        }
+        await this.evaluationFrameObjectsLoading;
     }
 
     needSave(frames?: IFrame[]) {
