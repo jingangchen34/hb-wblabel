@@ -374,7 +374,28 @@ export default function useEditClass() {
 
         const existingTrack = editor.trackManager.getTrackObject(newTrackId);
         if (existingTrack) {
-            editor.showMsg('warning', `Track ID ${newTrackId} already exists`);
+            const mergeStatus = editor.trackManager.canMerge(oldTrackId, newTrackId);
+            if (mergeStatus.code === 'object_repeat') {
+                editor.showMsg('warning', editor.lang('msg-merge-conflict'));
+                return;
+            }
+            if (mergeStatus.code === 'classType_diff') {
+                editor.showMsg('warning', editor.lang('msg-merge-different-class'));
+                return;
+            }
+
+            editor.withEventSource(SOURCE_CLASS, () => {
+                editor.trackManager.mergeTrackObject(oldTrackId, newTrackId);
+            });
+
+            const objects = editor.trackManager.getObjects(newTrackId);
+            state.trackId = newTrackId;
+            state.trackName = existingTrack.trackName || newTrackId;
+            tempObjects = objects;
+            trackObject = objects[0];
+            editor.setCurrentTrack(newTrackId, state.trackName);
+            editor.showMsg('success', editor.lang('msg-merge-success'));
+            editor.pc.render();
             return;
         }
 
