@@ -1,7 +1,21 @@
 <template>
     <Collapse :header="$$('resultsSource')">
         <div class="operation-results">
-            <div class="filter-wrap">
+            <div v-if="isEvaluationMode" class="evaluation-filter-wrap">
+                <a-checkbox
+                    :checked="isEvaluationSourceEnabled(EVALUATION_GT_SOURCE_ID)"
+                    @change="(event) => onEvaluationFilterChange(EVALUATION_GT_SOURCE_ID, event.target.checked)"
+                >
+                    <span class="evaluation-filter gt">GT</span>
+                </a-checkbox>
+                <a-checkbox
+                    :checked="isEvaluationSourceEnabled(EVALUATION_PRED_SOURCE_ID)"
+                    @change="(event) => onEvaluationFilterChange(EVALUATION_PRED_SOURCE_ID, event.target.checked)"
+                >
+                    <span class="evaluation-filter pred">Pred</span>
+                </a-checkbox>
+            </div>
+            <div v-else class="filter-wrap">
                 <a-select
                     :disabled="editor.state.status === StatusType.Play"
                     v-model:value="state.sourceFilters"
@@ -49,6 +63,7 @@
     import { useInjectEditor } from '../../../state';
     import { StatusType, SourceType, IResultSource } from 'pc-editor';
     import { CloseOutlined } from '@ant-design/icons-vue';
+    import { EVALUATION_GT_SOURCE_ID, EVALUATION_PRED_SOURCE_ID } from '../../../api/common';
     import Collapse from '../../Collapse/index.vue';
     import * as locale from './lang';
 
@@ -62,6 +77,7 @@
     let editor = useInjectEditor();
     let $$ = editor.bindLocale(locale);
     let { state } = editor;
+    const isEvaluationMode = computed(() => !!editor.bsState.query.showEvaluation);
 
     let filterTabs = computed(() => {
         let { FILTER_ALL } = state.config;
@@ -118,6 +134,24 @@
         return filters;
     });
 
+
+    function getEvaluationSelectedSources() {
+        const { FILTER_ALL } = state.config;
+        const evaluationSources = [EVALUATION_GT_SOURCE_ID, EVALUATION_PRED_SOURCE_ID];
+        if (state.sourceFilters.includes(FILTER_ALL)) return evaluationSources;
+        return state.sourceFilters.filter((value) => evaluationSources.includes(value));
+    }
+
+    function isEvaluationSourceEnabled(sourceId: string) {
+        return getEvaluationSelectedSources().includes(sourceId);
+    }
+
+    function onEvaluationFilterChange(sourceId: string, checked: boolean) {
+        const next = new Set(getEvaluationSelectedSources());
+        checked ? next.add(sourceId) : next.delete(sourceId);
+        state.sourceFilters = Array.from(next);
+        updateData();
+    }
     function onSelect(value: string) {
         let ALL = state.config.FILTER_ALL;
         if (value === ALL && state.sourceFilters.length > 1) {
@@ -156,6 +190,31 @@
             display: none;
         }
 
+
+        .evaluation-filter-wrap {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-height: 30px;
+
+            .ant-checkbox-wrapper {
+                color: rgba(255, 255, 255, 0.86);
+                margin: 0;
+            }
+
+            .evaluation-filter {
+                font-size: 13px;
+                font-weight: 600;
+            }
+
+            .evaluation-filter.gt {
+                color: #22c55e;
+            }
+
+            .evaluation-filter.pred {
+                color: #ef4444;
+            }
+        }
         .filter-wrap {
             display: flex;
             align-items: center;

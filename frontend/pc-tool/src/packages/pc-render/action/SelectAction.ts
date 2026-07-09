@@ -59,6 +59,9 @@ export default class SelectAction extends Action {
         if (object) {
             this.selectObject(object as any);
             this.onSelect();
+        } else {
+            this.selectObject();
+            this.onSelect();
         }
     }
 

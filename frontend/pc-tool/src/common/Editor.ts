@@ -3,6 +3,7 @@ import { IBSState } from '../type';
 import { getDefault } from '../state';
 import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
 import * as api from '../api';
+import { EVALUATION_GT_SOURCE_ID, EVALUATION_PRED_SOURCE_ID } from '../api/common';
 import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
 import MultiFrameMergeManager from './MultiFrameMergeManager';
@@ -142,13 +143,28 @@ export default class Editor extends BaseEditor {
         let { state } = this;
         frame = frame || this.getCurrentFrame();
         if (!frame.sources) {
-            let sources = await api.getResultSources(frame.id);
-            sources.unshift({
-                name: 'Without Task',
-                sourceId: state.config.withoutTaskId,
-                sourceType: SourceType.DATA_FLOW,
-            });
-            frame.sources = sources;
+            if (this.bsState.query.showEvaluation) {
+                frame.sources = [
+                    {
+                        name: 'GT',
+                        sourceId: EVALUATION_GT_SOURCE_ID,
+                        sourceType: SourceType.DATA_FLOW,
+                    },
+                    {
+                        name: 'Pred',
+                        sourceId: EVALUATION_PRED_SOURCE_ID,
+                        sourceType: SourceType.MODEL,
+                    },
+                ];
+            } else {
+                let sources = await api.getResultSources(frame.id);
+                sources.unshift({
+                    name: 'Without Task',
+                    sourceId: state.config.withoutTaskId,
+                    sourceType: SourceType.DATA_FLOW,
+                });
+                frame.sources = sources;
+            }
         }
         this.setSources(frame.sources);
 

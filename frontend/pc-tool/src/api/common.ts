@@ -16,6 +16,8 @@ import { utils } from 'pc-editor';
 import * as THREE from 'three';
 
 let { empty, queryStr, traverseClassification2Arr, traverseClass2Arr } = utils;
+export const EVALUATION_GT_SOURCE_ID = 'EVAL_GT';
+export const EVALUATION_PRED_SOURCE_ID = 'EVAL_PRED';
 
 export interface ISeriesFrameInfo {
     id: string;
@@ -49,11 +51,15 @@ export async function getModelEvaluationCompare(evaluationId: string | number, d
 
 function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PRED', index: number): any {
     const raw = item?.classAttributes || item || {};
+    const sourceId = source === 'GT' ? EVALUATION_GT_SOURCE_ID : EVALUATION_PRED_SOURCE_ID;
+    const sourceType = source === 'GT' ? SourceType.DATA_FLOW : SourceType.MODEL;
     if (raw.contour?.center3D && raw.contour?.size3D) {
         return {
             ...raw,
             dataId,
             source,
+            sourceId,
+            sourceType,
             color: source === 'GT' ? '#22c55e' : '#ef4444',
             classType: raw.classType || raw.modelClass || raw.label || raw.meta?.classType,
             modelClass: raw.modelClass || raw.label || raw.classType || raw.meta?.classType,
@@ -74,6 +80,8 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
         frontId: raw.frontId || raw.id || `${source}-${dataId}-${index}`,
         type: '3D_BOX',
         source,
+        sourceId,
+        sourceType,
         color: source === 'GT' ? '#22c55e' : '#ef4444',
         modelClass: label,
         classType: label,
