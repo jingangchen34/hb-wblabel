@@ -66,12 +66,12 @@ function hackMainView(editor: Editor, view: MainRenderView) {
         }, 30);
     }
 
-    // let selectAction = view.getAction('select') as SelectAction;
-    // if (selectAction) {
-    //     selectAction.selectObject = (object?: AnnotateObject) => {
-    //         editor.cmdManager.execute('select-object', object);
-    //     };
-    // }
+    let selectAction = view.getAction('select') as SelectAction;
+    if (selectAction) {
+        selectAction.selectObject = (object?: AnnotateObject) => {
+            editor.cmdManager.execute('select-object', object);
+        };
+    }
 }
 
 function hackImgView(editor: Editor, view: Image2DRenderView) {
