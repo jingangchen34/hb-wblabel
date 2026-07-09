@@ -290,7 +290,9 @@ export default class TrackManager {
                 userData: {
                     trackName: trackName,
                     trackId: targetTrackId,
-                },
+                    trackID: targetTrackId,
+                    TrackID: targetTrackId,
+                } as any,
             });
 
             this.editor.cmdManager.execute('delete-track', trackId);

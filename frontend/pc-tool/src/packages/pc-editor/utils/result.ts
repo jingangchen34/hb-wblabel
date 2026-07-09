@@ -161,9 +161,10 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.isProjection = obj.isProjection || false;
         // userData.isStandard = obj.isStandard || false;
         const rawTrackId =
-            (obj as any).TrackID ?? (obj as any).trackID ?? obj.trackId ?? (obj as any).trackingId ?? '';
-        userData.trackID = rawTrackId;
+            obj.trackId ?? (obj as any).TrackID ?? (obj as any).trackID ?? (obj as any).trackingId ?? '';
         userData.trackId = rawTrackId !== '' && rawTrackId !== undefined ? String(rawTrackId) : '';
+        userData.trackID = userData.trackId;
+        (userData as any).TrackID = userData.trackId;
         userData.trackName = obj.trackName || userData.trackId;
 
         userData.classType = classConfig?.name || '';
@@ -276,8 +277,8 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             // invisibleFlag: !!userData.invisibleFlag,
             isProjection: userData.isProjection || false,
             // isStandard: userData.isStandard || false,
-            TrackID: userData.trackID ?? userData.trackId ?? '',
-            trackID: userData.trackID ?? userData.trackId ?? '',
+            TrackID: userData.trackId || '',
+            trackID: userData.trackId || '',
             trackId: userData.trackId || '',
             trackName: userData.trackName || '',
             // resultStatus: userData.resultStatus || '',

@@ -123,13 +123,13 @@ export default class LoadManager {
         Object.keys(objectsMap).forEach((frameId) => {
             const objects = objectsMap[frameId] || [];
             objects.forEach((obj) => {
-                const sourceTrackId = (obj as any).TrackID ?? obj.trackID;
-                if (!obj.trackId && sourceTrackId !== undefined && sourceTrackId !== '') {
+                const sourceTrackId = obj.trackId ?? (obj as any).TrackID ?? obj.trackID;
+                if (sourceTrackId !== undefined && sourceTrackId !== '') {
                     obj.trackId = String(sourceTrackId);
                 }
                 if (!obj.trackId) obj.trackId = this.editor.createTrackId();
-                if (obj.trackID === undefined || obj.trackID === '') obj.trackID = obj.trackId;
-                (obj as any).TrackID = obj.trackID;
+                obj.trackID = obj.trackId;
+                (obj as any).TrackID = obj.trackId;
                 if (!obj.trackName) obj.trackName = obj.trackId;
             });
         });

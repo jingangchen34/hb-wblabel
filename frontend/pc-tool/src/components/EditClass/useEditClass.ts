@@ -404,6 +404,7 @@ export default function useEditClass() {
         const oldTrackData = editor.trackManager.getTrackObject(oldTrackId);
         const newUserData = {
             trackID: newTrackId,
+            TrackID: newTrackId,
             trackId: newTrackId,
             trackName: newTrackId,
         } as IUserData;
