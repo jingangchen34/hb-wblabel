@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Register an external KITTI LiDAR dataset in Xtreme1 without copying files.
 
-The KITTI ``label_2`` records use camera coordinates.  This importer applies the
-same ``box_camera_to_lidar`` convention as PointPillars' evaluation code before
-writing platform cuboids, so the boxes align with ``velodyne/*.bin`` in the web
-editor.  Images are deliberately not registered: these datasets are LiDAR-only.
+The KITTI annotations are in camera coordinates.  This importer can read either
+raw ``label_2`` + ``calib`` files or PointPillars/SANet ``kitti_infos_*.pkl``
+files, applies the same ``box_camera_to_lidar`` convention as the training code,
+and writes LiDAR-only Xtreme1 frames that reference files through the external
+read-only mount.
 """
 
 from __future__ import annotations
@@ -14,8 +15,8 @@ import hashlib
 import json
 import math
 import mimetypes
-import os
-from collections.abc import Iterator
+import pickle
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 
@@ -87,6 +88,21 @@ def parse_calib(path: Path) -> tuple[list[list[float]], list[list[float]]]:
     return rect, velo
 
 
+def as_matrix(values: object, rows: int, cols: int) -> list[list[float]]:
+    if hasattr(values, "tolist"):
+        values = values.tolist()
+    if isinstance(values, list) and values and isinstance(values[0], list):
+        matrix = [[float(value) for value in row[:cols]] for row in values[:rows]]
+    else:
+        flat = [float(value) for value in values]  # type: ignore[arg-type]
+        matrix = [[flat[row * cols + col] for col in range(cols)] for row in range(rows)]
+    if rows == 3 and cols == 3:
+        matrix = [row + [0.0] for row in matrix] + [[0.0, 0.0, 0.0, 1.0]]
+    elif rows == 3 and cols == 4:
+        matrix = matrix + [[0.0, 0.0, 0.0, 1.0]]
+    return matrix
+
+
 def matmul(left: list[list[float]], right: list[list[float]]) -> list[list[float]]:
     return [[sum(left[row][k] * right[k][col] for k in range(4)) for col in range(4)] for row in range(4)]
 
@@ -108,9 +124,12 @@ def invert_4x4(matrix: list[list[float]]) -> list[list[float]]:
     return [row[4:] for row in augmented]
 
 
-def camera_to_lidar(location: tuple[float, float, float], rect: list[list[float]], velo: list[list[float]]) -> tuple[float, float, float]:
+def lidar_inverse(rect: list[list[float]], velo: list[list[float]]) -> list[list[float]]:
     # Equivalent to box_np_ops.camera_to_lidar: point @ inv((R0_rect @ Tr_velo_to_cam).T).
-    inverse = invert_4x4(matmul(rect, velo))
+    return invert_4x4(matmul(rect, velo))
+
+
+def camera_to_lidar(location: tuple[float, float, float], inverse: list[list[float]]) -> tuple[float, float, float]:
     x, y, z = location
     return (
         inverse[0][0] * x + inverse[0][1] * y + inverse[0][2] * z + inverse[0][3],
@@ -121,6 +140,7 @@ def camera_to_lidar(location: tuple[float, float, float], rect: list[list[float]
 
 def parse_labels(path: Path, rect: list[list[float]], velo: list[list[float]]) -> list[dict[str, object]]:
     objects: list[dict[str, object]] = []
+    inverse = lidar_inverse(rect, velo)
     for index, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
         fields = line.split()
         if len(fields) < 15 or fields[0].lower() == "dontcare":
@@ -131,14 +151,63 @@ def parse_labels(path: Path, rect: list[list[float]], velo: list[list[float]]) -
             rotation_y = float(fields[14])
         except ValueError:
             continue
-        x, y, z = camera_to_lidar(location, rect, velo)
+        x, y, z = camera_to_lidar(location, inverse)
         if not all(math.isfinite(value) for value in (x, y, z, width, length, height, rotation_y)):
             continue
         objects.append({
             "className": fields[0],
             "trackID": f"{path.stem}-{index}",
             "center3D": {"x": x, "y": y, "z": z},
-            # PointPillars box_camera_to_lidar converts [l,h,w] to [w,l,h].
+            "size3D": {"x": width, "y": length, "z": height},
+            "rotation3D": {"x": 0.0, "y": 0.0, "z": rotation_y},
+        })
+    return objects
+
+
+def scalar(value: object) -> object:
+    return value.item() if hasattr(value, "item") else value
+
+
+def rows(values: object) -> list[object]:
+    if hasattr(values, "tolist"):
+        return values.tolist()
+    return list(values)  # type: ignore[arg-type]
+
+
+def pkl_annotations(info: dict[str, object]) -> list[dict[str, object]]:
+    annos = info.get("annos")
+    if not isinstance(annos, dict):
+        return []
+    names = rows(annos.get("name", []))
+    locations = rows(annos.get("location", []))
+    dimensions = rows(annos.get("dimensions", []))
+    rotations = rows(annos.get("rotation_y", []))
+    rect = as_matrix(info["calib/R0_rect"], 3, 3)
+    velo = as_matrix(info["calib/Tr_velo_to_cam"], 3, 4)
+    inverse = lidar_inverse(rect, velo)
+
+    objects: list[dict[str, object]] = []
+    for index, name in enumerate(names, start=1):
+        class_name = str(scalar(name))
+        if class_name.lower() == "dontcare" or index > len(locations) or index > len(dimensions) or index > len(rotations):
+            continue
+        try:
+            location_values = [float(value) for value in locations[index - 1]]
+            dimension_values = [float(value) for value in dimensions[index - 1]]
+            rotation_y = float(scalar(rotations[index - 1]))
+        except (TypeError, ValueError):
+            continue
+        if len(location_values) < 3 or len(dimension_values) < 3:
+            continue
+        x, y, z = camera_to_lidar(tuple(location_values[:3]), inverse)
+        length, height, width = dimension_values[:3]
+        if not all(math.isfinite(value) for value in (x, y, z, width, length, height, rotation_y)):
+            continue
+        frame_name = str(scalar(info.get("image_idx", ""))) or Path(str(info.get("velodyne_path", ""))).stem
+        objects.append({
+            "className": class_name,
+            "trackID": f"{frame_name}-{index}",
+            "center3D": {"x": x, "y": y, "z": z},
             "size3D": {"x": width, "y": length, "z": height},
             "rotation3D": {"x": 0.0, "y": 0.0, "z": rotation_y},
         })
@@ -169,6 +238,46 @@ def frame_paths(dataset_dir: Path, limit: int | None) -> Iterator[Path]:
     yield from files if limit is None else files[:limit]
 
 
+def pkl_paths(dataset_dir: Path, split: str) -> list[tuple[str, Path]]:
+    splits = ["train", "val"] if split == "all" else [split]
+    paths = [(name, dataset_dir / f"kitti_infos_{name}.pkl") for name in splits]
+    missing = [path for _, path in paths if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("missing KITTI info pkl: " + ", ".join(str(path) for path in missing))
+    return paths
+
+
+def iter_pkl_frames(dataset_dir: Path, split: str, limit: int | None) -> Iterator[tuple[Path, list[dict[str, object]], str]]:
+    yielded = 0
+    split_map = {"train": "TRAINING", "val": "VALIDATION", "test": "TEST"}
+    for split_name, pkl_path in pkl_paths(dataset_dir, split):
+        with pkl_path.open("rb") as handle:
+            infos = pickle.load(handle)
+        for info in infos:
+            if limit is not None and yielded >= limit:
+                return
+            if not isinstance(info, dict) or "velodyne_path" not in info:
+                continue
+            lidar = dataset_dir / str(info["velodyne_path"])
+            if not lidar.is_file():
+                continue
+            yielded += 1
+            yield lidar, pkl_annotations(info), split_map.get(split_name, "NOT_SPLIT")
+
+
+def iter_label_frames(dataset_dir: Path, limit: int | None) -> Iterator[tuple[Path, list[dict[str, object]], str]]:
+    for lidar in frame_paths(dataset_dir, limit):
+        label = dataset_dir / "training" / "label_2" / f"{lidar.stem}.txt"
+        calib = dataset_dir / "training" / "calib" / f"{lidar.stem}.txt"
+        if not label.is_file() or not calib.is_file():
+            continue
+        try:
+            rect, velo = parse_calib(calib)
+            yield lidar, parse_labels(label, rect, velo), "NOT_SPLIT"
+        except (OSError, ValueError) as exc:
+            print(f"Skip {lidar}: {exc}")
+
+
 def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespace, dataset_index: int) -> tuple[int, int]:
     dataset_name = f"pp_data/{dataset_dir.name}"
     dataset_var = f"@dataset_{dataset_index}"
@@ -191,17 +300,12 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
     file_index = 0
     frame_count = 0
     object_count = 0
-    for lidar in frame_paths(dataset_dir, args.limit):
-        label = dataset_dir / "training" / "label_2" / f"{lidar.stem}.txt"
-        calib = dataset_dir / "training" / "calib" / f"{lidar.stem}.txt"
-        if not label.is_file() or not calib.is_file():
-            continue
-        try:
-            rect, velo = parse_calib(calib)
-            annotations = parse_labels(label, rect, velo)
-        except (OSError, ValueError) as exc:
-            print(f"Skip {lidar}: {exc}")
-            continue
+    frames: Iterable[tuple[Path, list[dict[str, object]], str]]
+    if args.source == "pkl":
+        frames = iter_pkl_frames(dataset_dir, args.pkl_split, args.limit)
+    else:
+        frames = iter_label_frames(dataset_dir, args.limit)
+    for lidar, annotations, split_type in frames:
         frame_count += 1
         file_index += 1
         file_var = f"@file_{dataset_index}_{file_index}"
@@ -213,8 +317,8 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
         )
         output.write(
             "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
-            f"VALUES ({dataset_var},{sql_str(lidar.stem)},{sql_str(lidar.stem)},{content_sql},'SINGLE_DATA',{scene_var},'VALID','ANNOTATED','NOT_SPLIT',b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
-            "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`content`=VALUES(`content`),`annotation_status`=VALUES(`annotation_status`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+            f"VALUES ({dataset_var},{sql_str(lidar.stem)},{sql_str(lidar.stem)},{content_sql},'SINGLE_DATA',{scene_var},'VALID','ANNOTATED',{sql_str(split_type)},b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
+            "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`content`=VALUES(`content`),`annotation_status`=VALUES(`annotation_status`),`split_type`=VALUES(`split_type`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
         )
         output.write("SET @data_id=LAST_INSERT_ID();\n")
         for annotation in annotations:
@@ -244,6 +348,8 @@ def main() -> None:
     parser.add_argument("--bucket-name", default="external-data")
     parser.add_argument("--user-id", type=int, default=1)
     parser.add_argument("--limit", type=int, default=None, help="Optional per-dataset frame limit for validation")
+    parser.add_argument("--source", choices=("pkl", "labels"), default="pkl", help="Read KITTI infos pkl or raw label_2/calib files")
+    parser.add_argument("--pkl-split", choices=("train", "val", "all"), default="train", help="KITTI infos split to import in pkl mode")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     scan_root = Path(args.scan_root).resolve() if args.scan_root else root / "pp_data"
