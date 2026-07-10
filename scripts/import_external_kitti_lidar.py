@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""Register an external KITTI LiDAR dataset in Xtreme1 without copying files.
+
+The KITTI ``label_2`` records use camera coordinates.  This importer applies the
+same ``box_camera_to_lidar`` convention as PointPillars' evaluation code before
+writing platform cuboids, so the boxes align with ``velodyne/*.bin`` in the web
+editor.  Images are deliberately not registered: these datasets are LiDAR-only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import mimetypes
+import os
+from collections.abc import Iterator
+from pathlib import Path
+
+
+CLASS_COLORS = (
+    "#FF7A00", "#00D084", "#2F80ED", "#EB5757",
+    "#9B51E0", "#00B8D9", "#F2C94C", "#27AE60",
+)
+
+
+def sql_str(value: object | None) -> str:
+    if value is None:
+        return "NULL"
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def json_sql(value: object) -> str:
+    return sql_str(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+
+
+def rel_posix(path: Path, root: Path) -> str:
+    return path.resolve().relative_to(root.resolve()).as_posix()
+
+
+def path_hash(path: str) -> int:
+    return int.from_bytes(hashlib.md5(path.encode("utf-8")).digest()[:8], "big", signed=True)
+
+
+def class_color(name: str) -> str:
+    digest = int(hashlib.md5(name.lower().encode("utf-8")).hexdigest()[:8], 16)
+    return CLASS_COLORS[digest % len(CLASS_COLORS)]
+
+
+def file_sql(path: Path, root: Path, bucket_name: str, user_id: int, variable: str) -> list[str]:
+    relative = rel_posix(path, root)
+    file_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return [
+        "INSERT INTO `file` "
+        "(`name`,`original_name`,`path`,`path_hash`,`type`,`size`,`bucket_name`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
+        f"VALUES ({sql_str(path.name)},{sql_str(path.name)},{sql_str(relative)},{path_hash(relative)},"
+        f"{sql_str(file_type)},{path.stat().st_size},{sql_str(bucket_name)},NOW(),{user_id},NOW(),{user_id}) "
+        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`name`=VALUES(`name`),`original_name`=VALUES(`original_name`),"
+        "`type`=VALUES(`type`),`size`=VALUES(`size`),`bucket_name`=VALUES(`bucket_name`),updated_at=NOW(),updated_by=VALUES(updated_by);",
+        f"SET {variable}=LAST_INSERT_ID();",
+    ]
+
+
+def parse_calib(path: Path) -> tuple[list[list[float]], list[list[float]]]:
+    values: dict[str, list[float]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, raw = line.partition(":")
+        if not sep:
+            continue
+        try:
+            values[key.strip()] = [float(value) for value in raw.split()]
+        except ValueError:
+            continue
+    rect_values = values.get("R0_rect") or values.get("R_rect")
+    velo_values = values.get("Tr_velo_to_cam") or values.get("Tr_velo_cam")
+    if len(rect_values or []) != 9 or len(velo_values or []) != 12:
+        raise ValueError(f"invalid KITTI calibration: {path}")
+    rect = [[0.0] * 4 for _ in range(4)]
+    velo = [[0.0] * 4 for _ in range(4)]
+    rect[3][3] = velo[3][3] = 1.0
+    for row in range(3):
+        for col in range(3):
+            rect[row][col] = rect_values[row * 3 + col]
+        for col in range(4):
+            velo[row][col] = velo_values[row * 4 + col]
+    return rect, velo
+
+
+def matmul(left: list[list[float]], right: list[list[float]]) -> list[list[float]]:
+    return [[sum(left[row][k] * right[k][col] for k in range(4)) for col in range(4)] for row in range(4)]
+
+
+def invert_4x4(matrix: list[list[float]]) -> list[list[float]]:
+    augmented = [row[:] + [1.0 if row_index == col else 0.0 for col in range(4)] for row_index, row in enumerate(matrix)]
+    for column in range(4):
+        pivot = max(range(column, 4), key=lambda row: abs(augmented[row][column]))
+        if abs(augmented[pivot][column]) < 1e-12:
+            raise ValueError("singular KITTI calibration matrix")
+        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+        factor = augmented[column][column]
+        augmented[column] = [value / factor for value in augmented[column]]
+        for row in range(4):
+            if row == column:
+                continue
+            factor = augmented[row][column]
+            augmented[row] = [value - factor * pivot_value for value, pivot_value in zip(augmented[row], augmented[column])]
+    return [row[4:] for row in augmented]
+
+
+def camera_to_lidar(location: tuple[float, float, float], rect: list[list[float]], velo: list[list[float]]) -> tuple[float, float, float]:
+    # Equivalent to box_np_ops.camera_to_lidar: point @ inv((R0_rect @ Tr_velo_to_cam).T).
+    inverse = invert_4x4(matmul(rect, velo))
+    x, y, z = location
+    return (
+        inverse[0][0] * x + inverse[0][1] * y + inverse[0][2] * z + inverse[0][3],
+        inverse[1][0] * x + inverse[1][1] * y + inverse[1][2] * z + inverse[1][3],
+        inverse[2][0] * x + inverse[2][1] * y + inverse[2][2] * z + inverse[2][3],
+    )
+
+
+def parse_labels(path: Path, rect: list[list[float]], velo: list[list[float]]) -> list[dict[str, object]]:
+    objects: list[dict[str, object]] = []
+    for index, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        fields = line.split()
+        if len(fields) < 15 or fields[0].lower() == "dontcare":
+            continue
+        try:
+            height, width, length = (float(fields[8]), float(fields[9]), float(fields[10]))
+            location = (float(fields[11]), float(fields[12]), float(fields[13]))
+            rotation_y = float(fields[14])
+        except ValueError:
+            continue
+        x, y, z = camera_to_lidar(location, rect, velo)
+        if not all(math.isfinite(value) for value in (x, y, z, width, length, height, rotation_y)):
+            continue
+        objects.append({
+            "className": fields[0],
+            "trackID": f"{path.stem}-{index}",
+            "center3D": {"x": x, "y": y, "z": z},
+            # PointPillars box_camera_to_lidar converts [l,h,w] to [w,l,h].
+            "size3D": {"x": width, "y": length, "z": height},
+            "rotation3D": {"x": 0.0, "y": 0.0, "z": rotation_y},
+        })
+    return objects
+
+
+def annotation_sql(annotation: dict[str, object], dataset_var: str, class_var: str, user_id: int) -> str:
+    contour = json_sql({
+        "center3D": annotation["center3D"],
+        "size3D": annotation["size3D"],
+        "rotation3D": annotation["rotation3D"],
+    })
+    attributes = (
+        "JSON_OBJECT('id',REPLACE(UUID(),'-',''),'type','3D_BOX','version',0,"
+        f"'trackID',{sql_str(annotation['trackID'])},'trackId',{sql_str(annotation['trackID'])},"
+        f"'trackName',{sql_str(annotation['trackID'])},'classId',{class_var},"
+        f"'className',{sql_str(annotation['className'])},'classValues',JSON_ARRAY(),'contour',CAST({contour} AS JSON))"
+    )
+    return (
+        "INSERT INTO `data_annotation_object` "
+        "(`dataset_id`,`data_id`,`class_id`,`class_attributes`,`source_type`,`source_id`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
+        f"VALUES ({dataset_var},@data_id,{class_var},{attributes},'IMPORTED',-1,NOW(),{user_id},NOW(),{user_id});"
+    )
+
+
+def frame_paths(dataset_dir: Path, limit: int | None) -> Iterator[Path]:
+    files = sorted((dataset_dir / "training" / "velodyne").glob("*.bin"))
+    yield from files if limit is None else files[:limit]
+
+
+def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespace, dataset_index: int) -> tuple[int, int]:
+    dataset_name = f"pp_data/{dataset_dir.name}"
+    dataset_var = f"@dataset_{dataset_index}"
+    scene_var = f"@scene_{dataset_index}"
+    output.write(f"-- Dataset: {dataset_name}\n")
+    output.write(
+        "INSERT INTO `dataset` (`name`,`type`,`description`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
+        f"VALUES ({sql_str(dataset_name)},'LIDAR_BASIC',{sql_str('Haibo collected KITTI LiDAR data; labels converted from camera to LiDAR coordinates')},b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
+        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`type`=VALUES(`type`),`description`=VALUES(`description`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+    )
+    output.write(f"SET {dataset_var}=LAST_INSERT_ID();\n")
+    output.write(
+        "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
+        f"VALUES ({dataset_var},'training','training',JSON_ARRAY(),'SCENE',0,'VALID','NOT_ANNOTATED','NOT_SPLIT',b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
+        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+    )
+    output.write(f"SET {scene_var}=LAST_INSERT_ID();\n\n")
+
+    class_vars: dict[str, str] = {}
+    file_index = 0
+    frame_count = 0
+    object_count = 0
+    for lidar in frame_paths(dataset_dir, args.limit):
+        label = dataset_dir / "training" / "label_2" / f"{lidar.stem}.txt"
+        calib = dataset_dir / "training" / "calib" / f"{lidar.stem}.txt"
+        if not label.is_file() or not calib.is_file():
+            continue
+        try:
+            rect, velo = parse_calib(calib)
+            annotations = parse_labels(label, rect, velo)
+        except (OSError, ValueError) as exc:
+            print(f"Skip {lidar}: {exc}")
+            continue
+        frame_count += 1
+        file_index += 1
+        file_var = f"@file_{dataset_index}_{file_index}"
+        for statement in file_sql(lidar, root, args.bucket_name, args.user_id, file_var):
+            output.write(statement + "\n")
+        content_sql = (
+            "JSON_ARRAY(JSON_OBJECT(''name'',''point_cloud'',''type'',''directory'',''files'',"
+            f"JSON_ARRAY(JSON_OBJECT(''name'',{sql_str(lidar.name)},''type'',''file'',''fileId'',{file_var}))))"
+        )
+        output.write(
+            "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
+            f"VALUES ({dataset_var},{sql_str(lidar.stem)},{sql_str(lidar.stem)},{content_sql},'SINGLE_DATA',{scene_var},'VALID','ANNOTATED','NOT_SPLIT',b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
+            "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`content`=VALUES(`content`),`annotation_status`=VALUES(`annotation_status`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+        )
+        output.write("SET @data_id=LAST_INSERT_ID();\n")
+        for annotation in annotations:
+            class_name = str(annotation["className"])
+            class_var = class_vars.get(class_name.lower())
+            if class_var is None:
+                class_var = f"@class_{dataset_index}_{len(class_vars) + 1}"
+                class_vars[class_name.lower()] = class_var
+                output.write(
+                    "INSERT INTO `dataset_class` (`dataset_id`,`name`,`color`,`tool_type`,`tool_type_options`,`attributes`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
+                    f"VALUES ({dataset_var},{sql_str(class_name)},{sql_str(class_color(class_name))},'CUBOID',JSON_OBJECT(),JSON_ARRAY(),NOW(),{args.user_id},NOW(),{args.user_id}) "
+                    "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+                )
+                output.write(f"SET {class_var}=LAST_INSERT_ID();\n")
+            output.write(annotation_sql(annotation, dataset_var, class_var, args.user_id) + "\n")
+            object_count += 1
+        output.write("\n")
+    return frame_count, object_count
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate SQL for external KITTI LiDAR datasets.")
+    parser.add_argument("--root", required=True, help="Mounted external root, normally /home/user/cjg/conch_data")
+    parser.add_argument("--scan-root", default=None, help="Directory containing mydata_raw_point and mydata_remove")
+    parser.add_argument("--dataset", action="append", dest="datasets", help="Dataset directory name; repeat to select multiple")
+    parser.add_argument("--output", default="external_kitti_lidar_import.sql")
+    parser.add_argument("--bucket-name", default="external-data")
+    parser.add_argument("--user-id", type=int, default=1)
+    parser.add_argument("--limit", type=int, default=None, help="Optional per-dataset frame limit for validation")
+    args = parser.parse_args()
+    root = Path(args.root).resolve()
+    scan_root = Path(args.scan_root).resolve() if args.scan_root else root / "pp_data"
+    selected = args.datasets or [path.name for path in sorted(scan_root.iterdir()) if path.is_dir()]
+    dataset_dirs = [scan_root / name for name in selected]
+    invalid = [path for path in dataset_dirs if not (path / "training" / "velodyne").is_dir()]
+    if invalid:
+        parser.error("not a KITTI dataset: " + ", ".join(map(str, invalid)))
+    with Path(args.output).open("w", encoding="utf-8") as output:
+        output.write("-- Generated by scripts/import_external_kitti_lidar.py\nSET NAMES utf8mb4;\nSTART TRANSACTION;\n\n")
+        totals = [write_dataset(output, root, dataset_dir, args, index + 1) for index, dataset_dir in enumerate(dataset_dirs)]
+        output.write("COMMIT;\n")
+    frames = sum(total[0] for total in totals)
+    objects = sum(total[1] for total in totals)
+    print(f"Wrote {args.output}")
+    print(f"Datasets: {len(dataset_dirs)}, frames: {frames}, boxes: {objects}")
+
+
+if __name__ == "__main__":
+    main()
