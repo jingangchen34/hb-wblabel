@@ -208,8 +208,8 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
         for statement in file_sql(lidar, root, args.bucket_name, args.user_id, file_var):
             output.write(statement + "\n")
         content_sql = (
-            "JSON_ARRAY(JSON_OBJECT(''name'',''point_cloud'',''type'',''directory'',''files'',"
-            f"JSON_ARRAY(JSON_OBJECT(''name'',{sql_str(lidar.name)},''type'',''file'',''fileId'',{file_var}))))"
+            "JSON_ARRAY(JSON_OBJECT('name','point_cloud','type','directory','files',"
+            f"JSON_ARRAY(JSON_OBJECT('name',{sql_str(lidar.name)},'type','file','fileId',{file_var}))))"
         )
         output.write(
             "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
