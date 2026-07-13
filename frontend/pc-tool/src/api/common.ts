@@ -353,10 +353,11 @@ export async function saveSceneAttribute(attribute: ISceneAttribute) {
     await post(`/api/data/sceneAttribute`, attribute);
 }
 
-function buildFrameInfo(dataConfig: string | Record<string, any>, datasetId: string): IFrame {
-    const dataId = typeof dataConfig === 'string' ? dataConfig : dataConfig.id || dataConfig.dataId;
-    const name = typeof dataConfig === 'string' ? '' : dataConfig.name || '';
-    const orderName = typeof dataConfig === 'string' ? '' : dataConfig.orderName || dataConfig.order_name || '';
+function buildFrameInfo(dataConfig: string | number | Record<string, any>, datasetId: string): IFrame {
+    const isObject = typeof dataConfig === 'object' && dataConfig !== null;
+    const dataId = isObject ? dataConfig.id || dataConfig.dataId : dataConfig;
+    const name = isObject ? dataConfig.name || '' : '';
+    const orderName = isObject ? dataConfig.orderName || dataConfig.order_name || '' : '';
     return {
         id: dataId + '',
         datasetId,
