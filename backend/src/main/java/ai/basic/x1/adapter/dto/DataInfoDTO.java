@@ -109,6 +109,11 @@ public class DataInfoDTO {
         private String type;
 
         /**
+         * Point dimension for raw .bin point clouds.
+         */
+        private Integer pointDim;
+
+        /**
          * File information
          */
         private FileDTO file;

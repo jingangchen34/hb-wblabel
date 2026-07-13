@@ -31,7 +31,8 @@ export default class BusinessManager extends BaseBusinessManager {
         const dataFileStartedAt = performance.now();
         let { configs: fileConfig, name } = await api.getDataFile(data.id + '');
         logStep('getDataFile', dataFileStartedAt);
-        if (fileConfig.filter((e) => regLidar.test(e.dirName)).length === 0) {
+        const lidarFiles = fileConfig.filter((e) => regLidar.test(e.dirName));
+        if (lidarFiles.length === 0) {
             throw this.editor.lang('no-point-data');
         }
         let poseConfig = fileConfig.find((e) => /^pose\.json$/i.test(e.name));
@@ -62,7 +63,7 @@ export default class BusinessManager extends BaseBusinessManager {
             savedPointLabels,
             poseUrl: poseConfig?.url,
             obstacleUrl: obstacleConfig?.url,
-            binPointDim: [6, 7, 4],
+            binPointDim: lidarFiles.find((item) => item.pointDim)?.pointDim || [6, 7, 4],
             pointsData: {},
             viewConfig: info.config,
             time: 0,

@@ -409,6 +409,7 @@ export async function getDataFile(dataId: string) {
                 dirName,
                 name: config.name,
                 url: fileUrl.url,
+                pointDim: config.pointDim,
             });
             return;
         }

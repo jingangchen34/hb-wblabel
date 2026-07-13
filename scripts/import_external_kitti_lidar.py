@@ -278,10 +278,23 @@ def iter_label_frames(dataset_dir: Path, limit: int | None) -> Iterator[tuple[Pa
             print(f"Skip {lidar}: {exc}")
 
 
+def scene_name(split_type: str, scene_index: int) -> str:
+    prefixes = {"TRAINING": "train", "VALIDATION": "val", "TEST": "test"}
+    return f"{prefixes.get(split_type, 'clip')}_{scene_index:06d}"
+
+
+def write_scene(output, dataset_var: str, scene_var: str, scene: str, args: argparse.Namespace) -> None:
+    output.write(
+        "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
+        f"VALUES ({dataset_var},{sql_str(scene)},{sql_str(scene)},JSON_ARRAY(),'SCENE',0,'VALID','ANNOTATED','NOT_SPLIT',b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
+        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`order_name`=VALUES(`order_name`),`annotation_status`=VALUES(`annotation_status`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+    )
+    output.write(f"SET {scene_var}=LAST_INSERT_ID();\n\n")
+
+
 def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespace, dataset_index: int) -> tuple[int, int]:
     dataset_name = f"pp_data/{dataset_dir.name}"
     dataset_var = f"@dataset_{dataset_index}"
-    scene_var = f"@scene_{dataset_index}"
     output.write(f"-- Dataset: {dataset_name}\n")
     output.write(
         "INSERT INTO `dataset` (`name`,`type`,`description`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
@@ -289,23 +302,30 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
         "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`type`=VALUES(`type`),`description`=VALUES(`description`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
     )
     output.write(f"SET {dataset_var}=LAST_INSERT_ID();\n")
-    output.write(
-        "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
-        f"VALUES ({dataset_var},'training','training',JSON_ARRAY(),'SCENE',0,'VALID','NOT_ANNOTATED','NOT_SPLIT',b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
-        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
-    )
-    output.write(f"SET {scene_var}=LAST_INSERT_ID();\n\n")
+    if args.replace:
+        output.write(f"DELETE dao FROM `data_annotation_object` dao INNER JOIN `data` d ON dao.data_id=d.id WHERE d.dataset_id={dataset_var};\n")
+        output.write(f"DELETE FROM `dataset_class` WHERE dataset_id={dataset_var};\n")
+        output.write(f"DELETE FROM `data` WHERE dataset_id={dataset_var};\n\n")
 
     class_vars: dict[str, str] = {}
     file_index = 0
     frame_count = 0
     object_count = 0
+    current_scene_key = None
+    scene_counter = 0
     frames: Iterable[tuple[Path, list[dict[str, object]], str]]
     if args.source == "pkl":
         frames = iter_pkl_frames(dataset_dir, args.pkl_split, args.limit)
     else:
         frames = iter_label_frames(dataset_dir, args.limit)
     for lidar, annotations, split_type in frames:
+        clip_index = frame_count // args.clip_size + 1
+        scene_key = (split_type, clip_index)
+        if scene_key != current_scene_key:
+            current_scene_key = scene_key
+            scene_counter += 1
+            scene_var = f"@scene_{dataset_index}_{scene_counter}"
+            write_scene(output, dataset_var, scene_var, scene_name(split_type, clip_index), args)
         frame_count += 1
         file_index += 1
         file_var = f"@file_{dataset_index}_{file_index}"
@@ -313,12 +333,12 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
             output.write(statement + "\n")
         content_sql = (
             "JSON_ARRAY(JSON_OBJECT('name','point_cloud','type','directory','files',"
-            f"JSON_ARRAY(JSON_OBJECT('name',{sql_str(lidar.name)},'type','file','fileId',{file_var}))))"
+            f"JSON_ARRAY(JSON_OBJECT('name',{sql_str(lidar.name)},'type','file','fileId',{file_var},'pointDim',4))))"
         )
         output.write(
             "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
             f"VALUES ({dataset_var},{sql_str(lidar.stem)},{sql_str(lidar.stem)},{content_sql},'SINGLE_DATA',{scene_var},'VALID','ANNOTATED',{sql_str(split_type)},b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
-            "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`content`=VALUES(`content`),`annotation_status`=VALUES(`annotation_status`),`split_type`=VALUES(`split_type`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+            "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`content`=VALUES(`content`),`annotation_status`=VALUES(`annotation_status`),`split_type`=VALUES(`split_type`),`parent_id`=VALUES(`parent_id`),`order_name`=VALUES(`order_name`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
         )
         output.write("SET @data_id=LAST_INSERT_ID();\n")
         for annotation in annotations:
@@ -338,7 +358,6 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
         output.write("\n")
     return frame_count, object_count
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate SQL for external KITTI LiDAR datasets.")
     parser.add_argument("--root", required=True, help="Mounted external root, normally /home/user/cjg/conch_data")
@@ -348,6 +367,8 @@ def main() -> None:
     parser.add_argument("--bucket-name", default="external-data")
     parser.add_argument("--user-id", type=int, default=1)
     parser.add_argument("--limit", type=int, default=None, help="Optional per-dataset frame limit for validation")
+    parser.add_argument("--clip-size", type=int, default=30, help="Frames per generated scene/clip")
+    parser.add_argument("--replace", action="store_true", help="Delete existing data and classes in the target dataset before import")
     parser.add_argument("--source", choices=("pkl", "labels"), default="pkl", help="Read KITTI infos pkl or raw label_2/calib files")
     parser.add_argument("--pkl-split", choices=("train", "val", "all"), default="train", help="KITTI infos split to import in pkl mode")
     args = parser.parse_args()

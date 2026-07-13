@@ -146,6 +146,11 @@ public class DataInfoBO {
         private String type;
 
         /**
+         * Point dimension for raw .bin point clouds.
+         */
+        private Integer pointDim;
+
+        /**
          * File information
          */
         private RelationFileBO file;
