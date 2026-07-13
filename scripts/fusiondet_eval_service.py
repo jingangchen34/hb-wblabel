@@ -712,6 +712,16 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     if not source_config.is_absolute():
         source_config = POINTPILLARS_ROOT / source_config
     cfg_text = source_config.read_text(encoding="utf-8")
+    # The generated infos record the selected load dimension. Keep the reader
+    # config in sync so, for example, 6-D point clouds are not parsed as 4-D.
+    if load_dim is not None:
+        cfg_text, replaced = re.subn(
+            r"(num_point_features:\s*)\d+",
+            rf"\g<1>{load_dim}",
+            cfg_text,
+        )
+        if replaced == 0:
+            raise ValueError("PointPillars config has no num_point_features setting")
     cfg_text = re.sub(r'eval_input_reader:\s*\{(?P<body>.*?)\n\}', lambda m: _rewrite_pp_eval_reader(m, info_path, pp_root), cfg_text, flags=re.S)
     eval_config = work_dir / "pointpillars_eval.config"
     eval_config.write_text(cfg_text, encoding="utf-8")
@@ -823,7 +833,17 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     if ckpt_path:
         raw_cmd.append(f"--ckpt_path={ckpt_path}")
-    raw_completed = subprocess.run(raw_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+    # eval.py is launched from second/pytorch, so the repository root is not
+    # automatically importable. torchplus lives at that root.
+    pointpillars_env = os.environ.copy()
+    existing_pythonpath = pointpillars_env.get("PYTHONPATH")
+    pointpillars_env["PYTHONPATH"] = str(POINTPILLARS_ROOT)
+    if existing_pythonpath:
+        pointpillars_env["PYTHONPATH"] += os.pathsep + existing_pythonpath
+    raw_completed = subprocess.run(
+        raw_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True,
+        timeout=RUN_TIMEOUT_SEC, env=pointpillars_env,
+    )
     candidates = sorted(raw_result_dir.glob("**/eval_annos.pkl"), key=lambda p: p.stat().st_mtime, reverse=True)
     eval_annos = candidates[0] if candidates else None
 
@@ -842,7 +862,10 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         ]
         if fusion_eval_config:
             metric_cmd.extend(["--eval_config_json", str(fusion_eval_config)])
-        metric_completed = subprocess.run(metric_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+        metric_completed = subprocess.run(
+            metric_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True,
+            timeout=RUN_TIMEOUT_SEC, env=pointpillars_env,
+        )
 
     log_parts = [
         "$ " + " ".join(raw_cmd),
