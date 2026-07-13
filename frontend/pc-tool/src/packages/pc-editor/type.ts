@@ -359,6 +359,8 @@ export interface IFrame {
     // uuid
     // id: string;
     teamId?: string;
+    name?: string;
+    orderName?: string;
     pointsUrl: string;
     occUrl?: string;
     labelUrl?: string;

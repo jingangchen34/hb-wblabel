@@ -31,6 +31,7 @@ export default function useHeader() {
     let iState = reactive({
         fullScreen: false,
         dataName: '',
+        frameName: '',
     });
     watch(
         () => state.frameIndex,
@@ -79,7 +80,11 @@ export default function useHeader() {
     let updateName = () => {
         const frame = currentFrame.value;
         if (!frame) return;
-        iState.dataName = bsState.seriesFrameName || editor.dataResource.dataMap[frame.id]?.name || '';
+        const resourceName = editor.dataResource.dataMap[frame.id]?.name || '';
+        iState.frameName = resourceName || frame.name || frame.orderName || '';
+        iState.dataName = bsState.seriesFrameName
+            ? [bsState.seriesFrameName, iState.frameName].filter(Boolean).join(' / ')
+            : iState.frameName;
     };
     function onSave() {
         editor.saveObject();

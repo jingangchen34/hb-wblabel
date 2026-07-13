@@ -353,10 +353,15 @@ export async function saveSceneAttribute(attribute: ISceneAttribute) {
     await post(`/api/data/sceneAttribute`, attribute);
 }
 
-function buildFrameInfo(dataId: string, datasetId: string): IFrame {
+function buildFrameInfo(dataConfig: string | Record<string, any>, datasetId: string): IFrame {
+    const dataId = typeof dataConfig === 'string' ? dataConfig : dataConfig.id || dataConfig.dataId;
+    const name = typeof dataConfig === 'string' ? '' : dataConfig.name || '';
+    const orderName = typeof dataConfig === 'string' ? '' : dataConfig.orderName || dataConfig.order_name || '';
     return {
-        id: dataId,
+        id: dataId + '',
         datasetId,
+        name,
+        orderName,
         pointsUrl: '',
         queryTime: '',
         loadState: '',

@@ -30,6 +30,7 @@
             <span class="text">
                 <span style="margin-right: 4px">/</span>{{ state.frames.length }}
             </span>
+            <span v-if="iState.frameName" class="frame-name" :title="iState.frameName">{{ iState.frameName }}</span>
             <RightOutlined
                 :class="
                     state.frameIndex < state.frames.length - 1 && !blocking
@@ -236,7 +237,7 @@
                 color: #bec1ca;
                 padding-right: 12px;
                 border-right: 1px solid #57575c;
-                max-width: 120px;
+                max-width: 220px;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
@@ -296,6 +297,16 @@
                 min-width: 54px;
                 text-align: center;
                 color: #bec1ca;
+            }
+
+            .frame-name {
+                margin-left: 10px;
+                max-width: 88px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                color: #bec1ca;
+                font-size: 14px;
             }
 
             .merge-tools {
