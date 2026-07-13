@@ -138,6 +138,26 @@ def camera_to_lidar(location: tuple[float, float, float], inverse: list[list[flo
     )
 
 
+def normalize_yaw(yaw: float) -> float:
+    while yaw > math.pi:
+        yaw -= math.tau
+    while yaw <= -math.pi:
+        yaw += math.tau
+    return yaw
+
+
+def kitti_box_to_xtreme1_center(
+    location: tuple[float, float, float],
+    height: float,
+    rotation_y: float,
+    inverse: list[list[float]],
+) -> tuple[tuple[float, float, float], float]:
+    # KITTI labels store the 3D location at the object bottom center in camera
+    # coordinates. Xtreme1 renders boxes around their geometric center.
+    x, y, z = camera_to_lidar(location, inverse)
+    return (x, y, z + height / 2.0), normalize_yaw(-rotation_y)
+
+
 def parse_labels(path: Path, rect: list[list[float]], velo: list[list[float]]) -> list[dict[str, object]]:
     objects: list[dict[str, object]] = []
     inverse = lidar_inverse(rect, velo)
@@ -151,15 +171,15 @@ def parse_labels(path: Path, rect: list[list[float]], velo: list[list[float]]) -
             rotation_y = float(fields[14])
         except ValueError:
             continue
-        x, y, z = camera_to_lidar(location, inverse)
-        if not all(math.isfinite(value) for value in (x, y, z, width, length, height, rotation_y)):
+        (x, y, z), yaw = kitti_box_to_xtreme1_center(location, height, rotation_y, inverse)
+        if not all(math.isfinite(value) for value in (x, y, z, width, length, height, yaw)):
             continue
         objects.append({
             "className": fields[0],
             "trackID": f"{path.stem}-{index}",
             "center3D": {"x": x, "y": y, "z": z},
             "size3D": {"x": width, "y": length, "z": height},
-            "rotation3D": {"x": 0.0, "y": 0.0, "z": rotation_y},
+            "rotation3D": {"x": 0.0, "y": 0.0, "z": yaw},
         })
     return objects
 
@@ -199,9 +219,9 @@ def pkl_annotations(info: dict[str, object]) -> list[dict[str, object]]:
             continue
         if len(location_values) < 3 or len(dimension_values) < 3:
             continue
-        x, y, z = camera_to_lidar(tuple(location_values[:3]), inverse)
         length, height, width = dimension_values[:3]
-        if not all(math.isfinite(value) for value in (x, y, z, width, length, height, rotation_y)):
+        (x, y, z), yaw = kitti_box_to_xtreme1_center(tuple(location_values[:3]), height, rotation_y, inverse)
+        if not all(math.isfinite(value) for value in (x, y, z, width, length, height, yaw)):
             continue
         frame_name = str(scalar(info.get("image_idx", ""))) or Path(str(info.get("velodyne_path", ""))).stem
         objects.append({
@@ -209,7 +229,7 @@ def pkl_annotations(info: dict[str, object]) -> list[dict[str, object]]:
             "trackID": f"{frame_name}-{index}",
             "center3D": {"x": x, "y": y, "z": z},
             "size3D": {"x": width, "y": length, "z": height},
-            "rotation3D": {"x": 0.0, "y": 0.0, "z": rotation_y},
+            "rotation3D": {"x": 0.0, "y": 0.0, "z": yaw},
         })
     return objects
 
