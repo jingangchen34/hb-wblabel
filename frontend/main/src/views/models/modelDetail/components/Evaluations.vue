@@ -49,7 +49,7 @@
         <Form.Item label="Eval Metrics" required>
           <Checkbox.Group v-model:value="evaluateForm.metrics">
             <Checkbox value="mAP">mAP</Checkbox>
-            <Checkbox value="miou">mIoU</Checkbox>
+            <Checkbox v-if="!isPointPillarsModel" value="miou">mIoU</Checkbox>
           </Checkbox.Group>
         </Form.Item>
         <Form.Item label="Point Load Dim">
@@ -84,7 +84,7 @@
   import { useMessage } from '/@/hooks/web/useMessage';
   import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
 
-  const props = defineProps<{ modelId: string | number; datasetType: datasetTypeEnum }>();
+  const props = defineProps<{ modelId: string | number; datasetType: datasetTypeEnum; overviewData?: any }>();
   const go = useGo();
   const { createMessage } = useMessage();
   const records = ref<any[]>([]);
@@ -104,6 +104,12 @@
     splitType: 'TEST',
     metrics: ['mAP', 'miou'] as string[],
     loadDim: 6 as number | undefined,
+  });
+
+  const isPointPillarsModel = computed(() => {
+    const overview = props.overviewData || {};
+    const text = [overview.name, overview.url, overview.description, overview.scenario].join(' ').toLowerCase();
+    return text.includes('pointpillar') || text.includes('point_pillar') || text.includes('pp_data');
   });
 
   const statusColor = {
@@ -266,6 +272,11 @@
   };
 
   const openEvaluateModal = async () => {
+    if (isPointPillarsModel.value) {
+      evaluateForm.metrics = ['mAP'];
+    } else if (!evaluateForm.metrics.includes('miou')) {
+      evaluateForm.metrics = ['mAP', 'miou'];
+    }
     evaluateVisible.value = true;
     await loadDatasetOptions();
   };

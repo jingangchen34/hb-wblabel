@@ -39,9 +39,12 @@ TEST_SCRIPT = Path(env("FUSIONDET_TEST_SCRIPT", str(FUSIONDET_ROOT / "tools/test
 WORK_ROOT = Path(env("FUSIONDET_PLATFORM_EVAL_ROOT", str(FUSIONDET_ROOT / "work_dirs/platform_eval")))
 POINTPILLARS_ROOT = Path(env("POINTPILLARS_ROOT", "/home/user/cjg/code/pointpillars_hb"))
 POINTPILLARS_PYTHON = env("POINTPILLARS_EVAL_PYTHON", "/home/user/anaconda3/envs/sanet_deploy/bin/python")
+POINTPILLARS_RAW_EVAL_PYTHON = env("POINTPILLARS_RAW_EVAL_PYTHON", "/home/user/anaconda3/envs/pointpillars/bin/python")
+POINTPILLARS_METRIC_PYTHON = env("POINTPILLARS_METRIC_PYTHON", POINTPILLARS_PYTHON)
 POINTPILLARS_DEFAULT_CONFIG = Path(env("POINTPILLARS_EVAL_CONFIG", str(POINTPILLARS_ROOT / "model/pipeline.config")))
 POINTPILLARS_DEFAULT_MODEL_DIR = Path(env("POINTPILLARS_MODEL_DIR", str(POINTPILLARS_ROOT / "model")))
 POINTPILLARS_CLASS_MAP = env("POINTPILLARS_CLASS_MAP", "{}")
+FUSIONDET_EVAL_CONFIG_JSON = env("FUSIONDET_EVAL_CONFIG_JSON", "")
 EXTERNAL_DATA_ROOT = Path(env("EXTERNAL_DATA_ROOT", "/home/user/cjg/conch_data"))
 MYSQL_BIN = env("MYSQL_BIN", "mysql")
 MYSQL_DOCKER_CONTAINER = env("MYSQL_DOCKER_CONTAINER", "hb-wblabel-mysql-1")
@@ -736,6 +739,29 @@ def parse_pointpillars_metrics(output_dir: Path) -> dict[str, Any]:
     return {}
 
 
+
+def write_fusiondet_eval_config_json(work_dir: Path, config_path: str | None = None) -> Path | None:
+    if FUSIONDET_EVAL_CONFIG_JSON:
+        path = Path(FUSIONDET_EVAL_CONFIG_JSON)
+        return path if path.is_absolute() else FUSIONDET_ROOT / path
+    config_path = config_path or "configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py"
+    config_file = Path(config_path)
+    if not config_file.is_absolute():
+        config_file = FUSIONDET_ROOT / config_file
+    if not config_file.exists():
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fusion_eval_cfg", str(config_file))
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    cfg = getattr(mod, "eval_detection_configs", None)
+    if not cfg:
+        return None
+    out = work_dir / "eval_detection_config.json"
+    out.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out
 def pointpillars_predictions_from_eval_annos(eval_annos_path: Path, data_ids: list[int], class_map: dict[str, str] | None = None) -> dict[str, list[dict[str, Any]]]:
     class_map = class_map or {}
     with eval_annos_path.open("rb") as f:
@@ -772,6 +798,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
     eval_config, _, _ = build_pointpillars_eval_assets(evaluation_id, fusion_infos_path, load_dim, payload.get("configPath"))
     output_dir = work_dir / "pointpillars_fusion_metric"
+    fusion_eval_config = write_fusiondet_eval_config_json(work_dir, payload.get("configPath"))
     log_path = work_dir / "pointpillars_eval.log"
     checkpoint_path = str(payload.get("checkpointPath") or "")
     model_dir = Path(payload.get("modelDir") or POINTPILLARS_DEFAULT_MODEL_DIR)
@@ -784,26 +811,58 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         ckpt_path = None
     class_map = json.loads(POINTPILLARS_CLASS_MAP or "{}")
-    cmd = [
-        POINTPILLARS_PYTHON,
-        str(POINTPILLARS_ROOT / "second/pytorch/eval_fusion_metric.py"),
+    raw_result_dir = work_dir / "pointpillars_raw_eval"
+    raw_cmd = [
+        POINTPILLARS_RAW_EVAL_PYTHON,
+        str(POINTPILLARS_ROOT / "second/pytorch/eval.py"),
         "evaluate",
-        "--fusion_infos_path", str(fusion_infos_path),
-        "--fusiondet_root", str(FUSIONDET_ROOT),
-        "--output_dir", str(output_dir),
-        "--result_path", str(work_dir / "pointpillars_raw_eval"),
-        "--class_map", json.dumps(class_map, ensure_ascii=False),
-        str(eval_config),
-        str(model_dir),
+        f"--config_path={eval_config}",
+        f"--model_dir={model_dir}",
+        f"--result_path={raw_result_dir}",
+        "--save_fp_bev=False",
     ]
     if ckpt_path:
-        cmd.extend(["--ckpt_path", str(ckpt_path)])
-    completed = subprocess.run(cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
-    log_path.write_text("$ " + " ".join(cmd) + "\n\nSTDOUT:\n" + completed.stdout + "\n\nSTDERR:\n" + completed.stderr, encoding="utf-8")
-    if completed.returncode != 0:
-        raise RuntimeError(f"PointPillars evaluation failed, see {log_path}: {completed.stderr[-1000:]}")
-    candidates = sorted((work_dir / "pointpillars_raw_eval").glob("**/eval_annos.pkl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        raw_cmd.append(f"--ckpt_path={ckpt_path}")
+    raw_completed = subprocess.run(raw_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+    candidates = sorted(raw_result_dir.glob("**/eval_annos.pkl"), key=lambda p: p.stat().st_mtime, reverse=True)
     eval_annos = candidates[0] if candidates else None
+
+    metric_cmd = []
+    metric_completed = None
+    if raw_completed.returncode == 0 and eval_annos:
+        metric_cmd = [
+            POINTPILLARS_METRIC_PYTHON,
+            str(POINTPILLARS_ROOT / "second/pytorch/eval_fusion_metric.py"),
+            "from_eval_annos",
+            "--pp_eval_annos_path", str(eval_annos),
+            "--fusion_infos_path", str(fusion_infos_path),
+            "--fusiondet_root", str(FUSIONDET_ROOT),
+            "--output_dir", str(output_dir),
+            "--class_map", json.dumps(class_map, ensure_ascii=False),
+        ]
+        if fusion_eval_config:
+            metric_cmd.extend(["--eval_config_json", str(fusion_eval_config)])
+        metric_completed = subprocess.run(metric_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+
+    log_parts = [
+        "$ " + " ".join(raw_cmd),
+        "\nSTDOUT:\n" + raw_completed.stdout,
+        "\nSTDERR:\n" + raw_completed.stderr,
+    ]
+    if metric_cmd:
+        log_parts.extend([
+            "\n$ " + " ".join(metric_cmd),
+            "\nSTDOUT:\n" + (metric_completed.stdout if metric_completed else ""),
+            "\nSTDERR:\n" + (metric_completed.stderr if metric_completed else ""),
+        ])
+    log_path.write_text("\n".join(log_parts), encoding="utf-8")
+    if raw_completed.returncode != 0:
+        raise RuntimeError(f"PointPillars raw evaluation failed, see {log_path}: {raw_completed.stderr[-1000:]}")
+    if not eval_annos:
+        raise RuntimeError(f"PointPillars raw evaluation did not produce eval_annos.pkl, see {log_path}")
+    if metric_completed is None or metric_completed.returncode != 0:
+        stderr = metric_completed.stderr[-1000:] if metric_completed else "metric process was not started"
+        raise RuntimeError(f"PointPillars fusion metric failed, see {log_path}: {stderr}")
     predictions = pointpillars_predictions_from_eval_annos(eval_annos, ordered_data_ids, class_map) if eval_annos else {}
     return {
         "metrics": {**parse_pointpillars_metrics(output_dir), "requested": metrics, "engine": "pointpillars", "loadDim": load_dim},

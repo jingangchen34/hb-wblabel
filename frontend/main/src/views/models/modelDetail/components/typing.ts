@@ -8,6 +8,7 @@ export enum detailType {
 
 /** overview 接收数据类型 */
 export interface IOverview {
+  name?: string;
   description: Nullable<string>;
   scenario: Nullable<string>;
   isType: boolean;

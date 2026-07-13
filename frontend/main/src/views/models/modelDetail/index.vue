@@ -23,6 +23,7 @@
             v-if="item.key == detailType.evaluations"
             :modelId="modelId"
             :datasetType="datasetType"
+            :overviewData="overviewData"
           />
           <Settings
             :datasetType="datasetType"
@@ -107,6 +108,7 @@
   const modelId = String(route?.query?.id);
 
   let overviewData: IOverview = reactive({
+    name: '',
     isType: false,
     description: '',
     scenario: '',
@@ -130,6 +132,7 @@
 
     datasetType.value = res.datasetType ?? datasetTypeEnum.LIDAR_BASIC;
 
+    overviewData.name = res.name;
     overviewData.isType = res.isType;
     overviewData.description = res.description;
     overviewData.scenario = res.scenario;
