@@ -4,9 +4,11 @@ import ai.basic.x1.adapter.dto.ModelEvaluationCompareDTO;
 import ai.basic.x1.adapter.port.dao.DataAnnotationObjectDAO;
 import ai.basic.x1.adapter.port.dao.DataInfoDAO;
 import ai.basic.x1.adapter.port.dao.ModelEvaluationRecordDAO;
+import ai.basic.x1.adapter.port.dao.ModelDAO;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataAnnotationObject;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
 import ai.basic.x1.adapter.port.dao.mybatis.model.ModelEvaluationRecord;
+import ai.basic.x1.adapter.port.dao.mybatis.model.Model;
 import ai.basic.x1.adapter.port.dao.mybatis.extension.ExtendLambdaQueryWrapper;
 import ai.basic.x1.entity.ModelEvaluationCreateBO;
 import ai.basic.x1.entity.ModelRunFilterDataBO;
@@ -54,6 +56,9 @@ public class ModelEvaluationUseCase {
 
     @Autowired
     private DataInfoUseCase dataInfoUseCase;
+
+    @Autowired
+    private ModelDAO modelDAO;
 
     @Value("${fusiondet.evaluation.url:http://host.docker.internal:8510/evaluate}")
     private String evaluationUrl;
@@ -226,10 +231,16 @@ public class ModelEvaluationUseCase {
     private void runEvaluation(Long evaluationId, List<Long> frameIds, List<String> metrics, Integer loadDim, Long userId) {
         updateStatus(evaluationId, RunStatusEnum.RUNNING, null, userId);
         var record = modelEvaluationRecordDAO.getById(evaluationId);
+        var model = modelDAO.getById(record.getModelId());
         var request = new JSONObject();
         request.set("evaluationId", evaluationId);
         request.set("datasetId", record.getDatasetId());
         request.set("modelId", record.getModelId());
+        if (model != null) {
+            request.set("modelName", model.getName());
+            request.set("modelUrl", model.getUrl());
+        }
+        request.set("evaluationEngine", resolveEvaluationEngine(model));
         request.set("dataIds", frameIds);
         request.set("configPath", record.getConfigPath());
         request.set("checkpointPath", record.getCheckpointPath());
@@ -265,6 +276,17 @@ public class ModelEvaluationUseCase {
         }
     }
 
+    private String resolveEvaluationEngine(Model model) {
+        if (model == null) {
+            return "fusiondet";
+        }
+        var text = StrUtil.nullToEmpty(model.getName()) + " " + StrUtil.nullToEmpty(model.getUrl()) + " " + StrUtil.nullToEmpty(model.getDescription());
+        text = text.toLowerCase();
+        if (text.contains("pointpillar") || text.contains("point_pillar") || text.contains("pp_data")) {
+            return "pointpillars";
+        }
+        return "fusiondet";
+    }
     private void updateStatus(Long id, RunStatusEnum status, String errorReason, Long userId) {
         modelEvaluationRecordDAO.updateById(ModelEvaluationRecord.builder()
                 .id(id)

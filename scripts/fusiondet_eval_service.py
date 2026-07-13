@@ -16,8 +16,10 @@ import os
 import pickle
 import subprocess
 import shutil
+import re
 import sys
 import time
+import numpy as np
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,6 +37,11 @@ FUSIONDET_ROOT = Path(env("FUSIONDET_ROOT", "/home/user/cjg/code/fusiondet"))
 PYTHON_BIN = env("FUSIONDET_EVAL_PYTHON", sys.executable)
 TEST_SCRIPT = Path(env("FUSIONDET_TEST_SCRIPT", str(FUSIONDET_ROOT / "tools/test.py")))
 WORK_ROOT = Path(env("FUSIONDET_PLATFORM_EVAL_ROOT", str(FUSIONDET_ROOT / "work_dirs/platform_eval")))
+POINTPILLARS_ROOT = Path(env("POINTPILLARS_ROOT", "/home/user/cjg/code/pointpillars_hb"))
+POINTPILLARS_PYTHON = env("POINTPILLARS_EVAL_PYTHON", "/home/user/anaconda3/envs/sanet_deploy/bin/python")
+POINTPILLARS_DEFAULT_CONFIG = Path(env("POINTPILLARS_EVAL_CONFIG", str(POINTPILLARS_ROOT / "model/pipeline.config")))
+POINTPILLARS_DEFAULT_MODEL_DIR = Path(env("POINTPILLARS_MODEL_DIR", str(POINTPILLARS_ROOT / "model")))
+POINTPILLARS_CLASS_MAP = env("POINTPILLARS_CLASS_MAP", "{}")
 EXTERNAL_DATA_ROOT = Path(env("EXTERNAL_DATA_ROOT", "/home/user/cjg/conch_data"))
 MYSQL_BIN = env("MYSQL_BIN", "mysql")
 MYSQL_DOCKER_CONTAINER = env("MYSQL_DOCKER_CONTAINER", "hb-wblabel-mysql-1")
@@ -603,7 +610,212 @@ def write_test_runner(runner_path: Path) -> None:
     runner_path.write_text("\n".join(runner), encoding="utf-8")
 
 
+
+def infer_evaluation_engine(payload: dict[str, Any]) -> str:
+    explicit = str(payload.get("evaluationEngine") or payload.get("engine") or "").strip().lower()
+    if explicit:
+        return "pointpillars" if explicit in {"pointpillar", "pointpillars", "pp"} else "fusiondet"
+    text = " ".join(str(payload.get(key) or "") for key in ("modelName", "modelUrl", "configPath", "checkpointPath")).lower()
+    if "pointpillar" in text or "point_pillar" in text or "pp_data" in text:
+        return "pointpillars"
+    return "fusiondet"
+
+
+def fusion_info_lidar_path(info: dict[str, Any], dataset_root: Path) -> Path:
+    for key in ("lidar_path", "lidar_path_0", "pts_filename", "velodyne_path"):
+        value = info.get(key)
+        if value:
+            path = Path(str(value))
+            return path if path.is_absolute() else dataset_root / path
+    raise RuntimeError(f"Cannot find lidar path in fusion info keys={list(info.keys())}")
+
+
+def fusion_info_gt_arrays(info: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    if "gt_boxes" in info:
+        gt_boxes = info.get("gt_boxes")
+        gt_names = info.get("gt_names")
+        return np.asarray(gt_boxes if gt_boxes is not None else [], dtype=np.float32), np.asarray(gt_names if gt_names is not None else [])
+    annos = info.get("annos") or []
+    boxes = []
+    names = []
+    if isinstance(annos, list):
+        for anno in annos:
+            trans = anno.get("translation") or [0, 0, 0]
+            size = anno.get("size") or [0, 0, 0]
+            rot = anno.get("rotation") or [1, 0, 0, 0]
+            yaw = 0.0
+            try:
+                yaw = math.atan2(2.0 * (rot[0] * rot[3] + rot[1] * rot[2]), 1.0 - 2.0 * (rot[2] * rot[2] + rot[3] * rot[3]))
+            except Exception:
+                yaw = 0.0
+            boxes.append([*trans[:3], *size[:3], yaw])
+            names.append(str(anno.get("category") or anno.get("detection_name") or "unknown"))
+    return np.asarray(boxes, dtype=np.float32), np.asarray(names)
+
+
+def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, load_dim: int | None, config_path: str | None) -> tuple[Path, Path, Path]:
+    import numpy as np
+    with fusion_infos_path.open("rb") as f:
+        data = pickle.load(f)
+    fusion_infos = list(data.get("infos", data) if isinstance(data, dict) else data)
+    work_dir = WORK_ROOT / f"eval_{evaluation_id}"
+    pp_root = work_dir / "pointpillars_dataset"
+    velodyne_dir = pp_root / "training" / "velodyne"
+    velodyne_dir.mkdir(parents=True, exist_ok=True)
+    pp_infos = []
+    dataset_root = fusion_infos_path.parent
+    identity4 = np.eye(4, dtype=np.float32)
+    p2 = np.eye(4, dtype=np.float32)[:3]
+    for idx, info in enumerate(fusion_infos):
+        lidar_src = fusion_info_lidar_path(info, dataset_root)
+        lidar_name = f"{idx:06d}.bin"
+        ensure_link_or_copy(lidar_src, velodyne_dir / lidar_name)
+        boxes, names = fusion_info_gt_arrays(info)
+        locs = []
+        dims = []
+        rots = []
+        for box in boxes:
+            x, y, z, dx, dy, dz, yaw = [float(v) for v in box[:7]]
+            locs.append([x, y, z - dz * 0.5])
+            dims.append([dy, dz, dx])
+            rots.append(-yaw)
+        count = len(locs)
+        annos = {
+            "name": names.astype(str) if count else np.asarray([], dtype=str),
+            "truncated": np.zeros((count,), dtype=np.float32),
+            "occluded": np.zeros((count,), dtype=np.int32),
+            "alpha": np.zeros((count,), dtype=np.float32),
+            "bbox": np.zeros((count, 4), dtype=np.float32),
+            "dimensions": np.asarray(dims, dtype=np.float32).reshape((-1, 3)),
+            "location": np.asarray(locs, dtype=np.float32).reshape((-1, 3)),
+            "rotation_y": np.asarray(rots, dtype=np.float32),
+            "difficulty": np.zeros((count,), dtype=np.int32),
+            "num_points_in_gt": np.ones((count,), dtype=np.int32),
+        }
+        pp_infos.append({
+            "image_idx": idx,
+            "pointcloud_num_features": int(load_dim or 4),
+            "velodyne_path": f"training/velodyne/{lidar_name}",
+            "img_shape": [1920, 1080],
+            "calib/R0_rect": identity4,
+            "calib/Tr_velo_to_cam": identity4,
+            "calib/P2": p2,
+            "annos": annos,
+        })
+    info_path = pp_root / "kitti_infos_eval.pkl"
+    with info_path.open("wb") as f:
+        pickle.dump(pp_infos, f)
+    source_config = Path(config_path) if config_path and str(config_path).endswith(".config") else POINTPILLARS_DEFAULT_CONFIG
+    if not source_config.is_absolute():
+        source_config = POINTPILLARS_ROOT / source_config
+    cfg_text = source_config.read_text(encoding="utf-8")
+    cfg_text = re.sub(r'eval_input_reader:\s*\{(?P<body>.*?)\n\}', lambda m: _rewrite_pp_eval_reader(m, info_path, pp_root), cfg_text, flags=re.S)
+    eval_config = work_dir / "pointpillars_eval.config"
+    eval_config.write_text(cfg_text, encoding="utf-8")
+    return eval_config, pp_root, info_path
+
+
+def _rewrite_pp_eval_reader(match: re.Match, info_path: Path, root_path: Path) -> str:
+    body = match.group("body")
+    body = re.sub(r'kitti_info_path:\s*"[^"]*"', f'kitti_info_path: "{info_path}"', body)
+    body = re.sub(r'kitti_root_path:\s*"[^"]*"', f'kitti_root_path: "{root_path}"', body)
+    if "kitti_info_path" not in body:
+        body += f'\n  kitti_info_path: "{info_path}"'
+    if "kitti_root_path" not in body:
+        body += f'\n  kitti_root_path: "{root_path}"'
+    return "eval_input_reader: {" + body + "\n}"
+
+
+def parse_pointpillars_metrics(output_dir: Path) -> dict[str, Any]:
+    summary = output_dir / "metrics_summary.json"
+    if summary.exists():
+        data = json.loads(summary.read_text(encoding="utf-8"))
+        detection = compact_detection_metrics(data)
+        detection["detectionText"] = format_detection_metrics(detection)
+        return detection
+    return {}
+
+
+def pointpillars_predictions_from_eval_annos(eval_annos_path: Path, data_ids: list[int], class_map: dict[str, str] | None = None) -> dict[str, list[dict[str, Any]]]:
+    class_map = class_map or {}
+    with eval_annos_path.open("rb") as f:
+        data = pickle.load(f)
+    annos = data.get("dt_annos", data) if isinstance(data, dict) else data
+    predictions: dict[str, list[dict[str, Any]]] = {}
+    for data_id, anno in zip(data_ids, annos):
+        boxes = np.asarray(anno.get("box3d_lidar", []), dtype=np.float32)
+        names = list(anno.get("name", []))
+        scores = np.asarray(anno.get("score", []), dtype=np.float32)
+        frame_preds = []
+        for index, box in enumerate(boxes):
+            label = class_map.get(str(names[index]), str(names[index])) if index < len(names) else "unknown"
+            score = float(scores[index]) if index < len(scores) else 0.0
+            frame_preds.append({
+                "source": "PRED",
+                "color": "#ef4444",
+                "label": label,
+                "confidence": score,
+                "displayText": f"{label} {score:.2f}",
+                "box": {"x": float(box[0]), "y": float(box[1]), "z": float(box[2] + box[5] * 0.5), "dx": float(box[3]), "dy": float(box[4]), "dz": float(box[5]), "yaw": float(-box[6])},
+            })
+        predictions[str(data_id)] = frame_preds
+    return predictions
+
+
+def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
+    evaluation_id = int(payload["evaluationId"])
+    data_ids = [int(x) for x in payload.get("dataIds", [])]
+    raw_load_dim = payload.get("loadDim")
+    load_dim = int(raw_load_dim) if raw_load_dim not in (None, "") else None
+    metrics = [str(metric) for metric in payload.get("metrics") or ["mAP"] if str(metric) == "mAP"] or ["mAP"]
+    fusion_infos_path, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, ["mAP"])
+    work_dir = WORK_ROOT / f"eval_{evaluation_id}"
+    eval_config, _, _ = build_pointpillars_eval_assets(evaluation_id, fusion_infos_path, load_dim, payload.get("configPath"))
+    output_dir = work_dir / "pointpillars_fusion_metric"
+    log_path = work_dir / "pointpillars_eval.log"
+    checkpoint_path = str(payload.get("checkpointPath") or "")
+    model_dir = Path(payload.get("modelDir") or POINTPILLARS_DEFAULT_MODEL_DIR)
+    if checkpoint_path and not checkpoint_path.endswith(".pth"):
+        ckpt_path = Path(checkpoint_path)
+        if not ckpt_path.is_absolute():
+            ckpt_path = POINTPILLARS_ROOT / ckpt_path
+        if not ckpt_path.exists():
+            ckpt_path = None
+    else:
+        ckpt_path = None
+    class_map = json.loads(POINTPILLARS_CLASS_MAP or "{}")
+    cmd = [
+        POINTPILLARS_PYTHON,
+        str(POINTPILLARS_ROOT / "second/pytorch/eval_fusion_metric.py"),
+        "evaluate",
+        "--fusion_infos_path", str(fusion_infos_path),
+        "--fusiondet_root", str(FUSIONDET_ROOT),
+        "--output_dir", str(output_dir),
+        "--result_path", str(work_dir / "pointpillars_raw_eval"),
+        "--class_map", json.dumps(class_map, ensure_ascii=False),
+        str(eval_config),
+        str(model_dir),
+    ]
+    if ckpt_path:
+        cmd.extend(["--ckpt_path", str(ckpt_path)])
+    completed = subprocess.run(cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True, timeout=RUN_TIMEOUT_SEC)
+    log_path.write_text("$ " + " ".join(cmd) + "\n\nSTDOUT:\n" + completed.stdout + "\n\nSTDERR:\n" + completed.stderr, encoding="utf-8")
+    if completed.returncode != 0:
+        raise RuntimeError(f"PointPillars evaluation failed, see {log_path}: {completed.stderr[-1000:]}")
+    candidates = sorted((work_dir / "pointpillars_raw_eval").glob("**/eval_annos.pkl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    eval_annos = candidates[0] if candidates else None
+    predictions = pointpillars_predictions_from_eval_annos(eval_annos, ordered_data_ids, class_map) if eval_annos else {}
+    return {
+        "metrics": {**parse_pointpillars_metrics(output_dir), "requested": metrics, "engine": "pointpillars", "loadDim": load_dim},
+        "miouDataCount": miou_count,
+        "outputPath": str(output_dir),
+        "logPath": str(log_path),
+        "predictions": predictions,
+    }
+
 def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
+    if infer_evaluation_engine(payload) == "pointpillars":
+        return run_pointpillars_eval(payload)
     evaluation_id = int(payload["evaluationId"])
     data_ids = [int(x) for x in payload.get("dataIds", [])]
     config_path = str(payload.get("configPath") or "configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py")
