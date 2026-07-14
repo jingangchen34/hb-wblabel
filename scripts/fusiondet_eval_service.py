@@ -657,16 +657,16 @@ def fusion_info_gt_arrays(info: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]
     return np.asarray(boxes, dtype=np.float32), np.asarray(names)
 
 
-def write_pointpillars_lidar(source: Path, target: Path, source_dim: int) -> None:
-    if source_dim < POINTPILLARS_INPUT_DIM:
-        raise ValueError(f"PointPillars requires at least {POINTPILLARS_INPUT_DIM} point features, got {source_dim}")
+def write_pointpillars_lidar(source: Path, target: Path, source_dim: int, model_input_dim: int) -> None:
+    if model_input_dim > source_dim:
+        raise ValueError(f"PointPillars model input dimension {model_input_dim} exceeds source point dimension {source_dim}")
     values = np.fromfile(source, dtype=np.float32)
     if values.size % source_dim:
         raise ValueError(f"Invalid point cloud {source}: {values.size} floats cannot form {source_dim}-D points")
-    values.reshape((-1, source_dim))[:, :POINTPILLARS_INPUT_DIM].astype(np.float32, copy=False).tofile(target)
+    values.reshape((-1, source_dim))[:, :model_input_dim].astype(np.float32, copy=False).tofile(target)
 
 
-def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, load_dim: int | None, config_path: str | None) -> tuple[Path, Path, Path]:
+def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, source_point_dim: int, model_input_dim: int, config_path: str | None) -> tuple[Path, Path, Path]:
     import numpy as np
     with fusion_infos_path.open("rb") as f:
         data = pickle.load(f)
@@ -679,11 +679,10 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     dataset_root = fusion_infos_path.parent
     identity4 = np.eye(4, dtype=np.float32)
     p2 = np.eye(4, dtype=np.float32)[:3]
-    source_point_dim = int(load_dim or POINTPILLARS_INPUT_DIM)
     for idx, info in enumerate(fusion_infos):
         lidar_src = fusion_info_lidar_path(info, dataset_root)
         lidar_name = f"{idx:06d}.bin"
-        write_pointpillars_lidar(lidar_src, velodyne_dir / lidar_name, source_point_dim)
+        write_pointpillars_lidar(lidar_src, velodyne_dir / lidar_name, source_point_dim, model_input_dim)
         boxes, names = fusion_info_gt_arrays(info)
         locs = []
         dims = []
@@ -708,7 +707,7 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
         }
         pp_infos.append({
             "image_idx": idx,
-            "pointcloud_num_features": POINTPILLARS_INPUT_DIM,
+            "pointcloud_num_features": model_input_dim,
             "velodyne_path": f"training/velodyne/{lidar_name}",
             "img_shape": [1920, 1080],
             "calib/R0_rect": identity4,
@@ -725,6 +724,11 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     if not source_config.is_file():
         raise FileNotFoundError(f"PointPillars config not found: {source_config}")
     cfg_text = source_config.read_text(encoding="utf-8")
+    dimensions = [int(value) for value in re.findall(r"num_point_features:\s*(\d+)", cfg_text)]
+    if not dimensions:
+        raise ValueError(f"PointPillars config has no num_point_features setting: {source_config}")
+    if any(value != model_input_dim for value in dimensions):
+        raise ValueError(f"PointPillars config expects {dimensions[0]} input features, but modelInputDim is {model_input_dim}")
     cfg_text = re.sub(r'eval_input_reader:\s*\{(?P<body>.*?)\n\}', lambda m: _rewrite_pp_eval_reader(m, info_path, pp_root), cfg_text, flags=re.S)
     eval_config = work_dir / "pointpillars_eval.config"
     eval_config.write_text(cfg_text, encoding="utf-8")
@@ -804,12 +808,22 @@ def pointpillars_predictions_from_eval_annos(eval_annos_path: Path, data_ids: li
 def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     evaluation_id = int(payload["evaluationId"])
     data_ids = [int(x) for x in payload.get("dataIds", [])]
-    raw_load_dim = payload.get("loadDim")
-    load_dim = int(raw_load_dim) if raw_load_dim not in (None, "") else None
+    raw_source_dim = payload.get("sourcePointDim", payload.get("loadDim"))
+    raw_model_dim = payload.get("modelInputDim")
+    if raw_source_dim in (None, ""):
+        raise ValueError("sourcePointDim is required for PointPillars evaluation")
+    if raw_model_dim in (None, ""):
+        raise ValueError("modelInputDim is required for PointPillars evaluation")
+    source_point_dim = int(raw_source_dim)
+    model_input_dim = int(raw_model_dim)
+    if source_point_dim < 1 or model_input_dim < 1:
+        raise ValueError("PointPillars dimensions must be positive")
+    if model_input_dim > source_point_dim:
+        raise ValueError(f"modelInputDim {model_input_dim} exceeds sourcePointDim {source_point_dim}")
     metrics = [str(metric) for metric in payload.get("metrics") or ["mAP"] if str(metric) == "mAP"] or ["mAP"]
     fusion_infos_path, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, ["mAP"])
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
-    eval_config, _, _ = build_pointpillars_eval_assets(evaluation_id, fusion_infos_path, load_dim, payload.get("configPath"))
+    eval_config, _, _ = build_pointpillars_eval_assets(evaluation_id, fusion_infos_path, source_point_dim, model_input_dim, payload.get("configPath"))
     output_dir = work_dir / "pointpillars_fusion_metric"
     fusion_eval_config = write_fusiondet_eval_config_json(work_dir, payload.get("configPath"))
     log_path = work_dir / "pointpillars_eval.log"
@@ -886,7 +900,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"PointPillars fusion metric failed, see {log_path}: {stderr}")
     predictions = pointpillars_predictions_from_eval_annos(eval_annos, ordered_data_ids, class_map) if eval_annos else {}
     return {
-        "metrics": {**parse_pointpillars_metrics(output_dir), "requested": metrics, "engine": "pointpillars", "loadDim": load_dim},
+        "metrics": {**parse_pointpillars_metrics(output_dir), "requested": metrics, "engine": "pointpillars", "sourcePointDim": source_point_dim, "modelInputDim": model_input_dim},
         "miouDataCount": miou_count,
         "outputPath": str(output_dir),
         "logPath": str(log_path),

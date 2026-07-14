@@ -52,8 +52,11 @@
             <Checkbox v-if="!isPointPillarsModel" value="miou">mIoU</Checkbox>
           </Checkbox.Group>
         </Form.Item>
-        <Form.Item label="Point Load Dim">
-          <InputNumber v-model:value="evaluateForm.loadDim" :min="1" :max="16" :precision="0" />
+        <Form.Item label="Source Point Dim" required>
+          <InputNumber v-model:value="evaluateForm.sourcePointDim" :min="1" :max="16" :precision="0" />
+        </Form.Item>
+        <Form.Item v-if="isPointPillarsModel" label="Model Input Dim" required>
+          <InputNumber v-model:value="evaluateForm.modelInputDim" :min="1" :max="16" :precision="0" />
         </Form.Item>
         <Form.Item v-if="isPointPillarsModel" label="PointPillars Config" required>
           <Input v-model:value="evaluateForm.configPath" placeholder="/home/user/.../xyres_0.16_raw.proto" />
@@ -109,7 +112,8 @@
     datasetIds: [] as number[],
     splitType: 'TEST',
     metrics: ['mAP', 'miou'] as string[],
-    loadDim: 6 as number | undefined,
+    sourcePointDim: 6 as number | undefined,
+    modelInputDim: 4 as number | undefined,
     configPath: '',
     checkpointPath: '',
   });
@@ -302,6 +306,10 @@
       createMessage.warning('Please provide the PointPillars config and weight directory.');
       return;
     }
+    if (!evaluateForm.sourcePointDim || (isPointPillarsModel.value && (!evaluateForm.modelInputDim || evaluateForm.modelInputDim > evaluateForm.sourcePointDim))) {
+      createMessage.warning('Model input dimension must not exceed source point dimension.');
+      return;
+    }
     if (!matchedCount.value) {
       createMessage.warning('No matched frames for evaluation.');
       return;
@@ -313,7 +321,8 @@
         datasetIds: evaluateForm.datasetIds,
         modelId: Number(props.modelId),
         metrics: evaluateForm.metrics,
-        loadDim: evaluateForm.loadDim,
+        sourcePointDim: evaluateForm.sourcePointDim,
+        modelInputDim: isPointPillarsModel.value ? evaluateForm.modelInputDim : undefined,
         configPath: evaluateForm.configPath,
         checkpointPath: evaluateForm.checkpointPath,
         dataFilterParam: {

@@ -42,6 +42,10 @@ public class ModelEvaluationRecord {
 
     private String checkpointPath;
 
+    private Integer sourcePointDim;
+
+    private Integer modelInputDim;
+
     @TableField(value = "metrics", typeHandler = JacksonTypeHandler.class)
     private JSONObject metrics;
 

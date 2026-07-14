@@ -30,6 +30,10 @@ public class ModelEvaluationRecordDTO {
 
     private String checkpointPath;
 
+    private Integer sourcePointDim;
+
+    private Integer modelInputDim;
+
     private JSONObject metrics;
 
     private JSONArray dataIds;

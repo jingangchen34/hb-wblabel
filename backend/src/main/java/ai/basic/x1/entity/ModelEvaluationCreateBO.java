@@ -23,7 +23,11 @@ public class ModelEvaluationCreateBO {
 
     private List<String> metrics;
 
-    private Integer loadDim;
+    /** Raw point-cloud feature dimension used to parse each .bin file. */
+    private Integer sourcePointDim;
+
+    /** Number of features passed into the selected model. */
+    private Integer modelInputDim;
 
     private Long createdBy;
 

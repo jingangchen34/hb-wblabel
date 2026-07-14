@@ -91,10 +91,12 @@ public class ModelEvaluationUseCase {
                 .dataIds(JSONUtil.parseArray(frameIds))
                 .configPath(configPath)
                 .checkpointPath(checkpointPath)
+                .sourcePointDim(createBO.getSourcePointDim())
+                .modelInputDim(createBO.getModelInputDim())
                 .createdBy(createBO.getCreatedBy())
                 .build();
         modelEvaluationRecordDAO.save(record);
-        EXECUTOR.execute(() -> runEvaluation(record.getId(), frameIds, resolveMetrics(createBO), createBO.getLoadDim(), createBO.getCreatedBy()));
+        EXECUTOR.execute(() -> runEvaluation(record.getId(), frameIds, resolveMetrics(createBO), createBO.getCreatedBy()));
         return record.getId();
     }
 
@@ -228,7 +230,7 @@ public class ModelEvaluationUseCase {
         return frameIds.stream().distinct().collect(Collectors.toList());
     }
 
-    private void runEvaluation(Long evaluationId, List<Long> frameIds, List<String> metrics, Integer loadDim, Long userId) {
+    private void runEvaluation(Long evaluationId, List<Long> frameIds, List<String> metrics, Long userId) {
         updateStatus(evaluationId, RunStatusEnum.RUNNING, null, userId);
         var record = modelEvaluationRecordDAO.getById(evaluationId);
         var model = modelDAO.getById(record.getModelId());
@@ -245,8 +247,10 @@ public class ModelEvaluationUseCase {
         request.set("configPath", record.getConfigPath());
         request.set("checkpointPath", record.getCheckpointPath());
         request.set("metrics", metrics);
-        if (loadDim != null) {
-            request.set("loadDim", loadDim);
+        request.set("sourcePointDim", record.getSourcePointDim());
+        request.set("modelInputDim", record.getModelInputDim());
+        if (record.getSourcePointDim() != null) {
+            request.set("loadDim", record.getSourcePointDim());
         }
         try {
             var response = HttpRequest.post(evaluationUrl)
