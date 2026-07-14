@@ -55,6 +55,12 @@
         <Form.Item label="Point Load Dim">
           <InputNumber v-model:value="evaluateForm.loadDim" :min="1" :max="16" :precision="0" />
         </Form.Item>
+        <Form.Item v-if="isPointPillarsModel" label="PointPillars Config" required>
+          <Input v-model:value="evaluateForm.configPath" placeholder="/home/user/.../xyres_0.16_raw.proto" />
+        </Form.Item>
+        <Form.Item v-if="isPointPillarsModel" label="PointPillars Weight Directory" required>
+          <Input v-model:value="evaluateForm.checkpointPath" placeholder="/data/.../model_dir" />
+        </Form.Item>
         <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
     </Modal>
@@ -69,7 +75,7 @@
 </template>
 <script lang="tsx" setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue';
-  import { Checkbox, Form, InputNumber, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
+  import { Checkbox, Form, Input, InputNumber, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
   import { Button } from '/@@/Button';
   import { getDateTime } from '/@/utils/business/timeFormater';
   import {
@@ -104,6 +110,8 @@
     splitType: 'TEST',
     metrics: ['mAP', 'miou'] as string[],
     loadDim: 6 as number | undefined,
+    configPath: '',
+    checkpointPath: '',
   });
 
   const isPointPillarsModel = computed(() => {
@@ -290,6 +298,10 @@
       createMessage.warning('Please select eval metrics.');
       return;
     }
+    if (isPointPillarsModel.value && (!evaluateForm.configPath.trim() || !evaluateForm.checkpointPath.trim())) {
+      createMessage.warning('Please provide the PointPillars config and weight directory.');
+      return;
+    }
     if (!matchedCount.value) {
       createMessage.warning('No matched frames for evaluation.');
       return;
@@ -302,6 +314,8 @@
         modelId: Number(props.modelId),
         metrics: evaluateForm.metrics,
         loadDim: evaluateForm.loadDim,
+        configPath: evaluateForm.configPath,
+        checkpointPath: evaluateForm.checkpointPath,
         dataFilterParam: {
           dataCountRatio: 100,
           isExcludeModelData: false,

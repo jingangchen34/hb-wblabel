@@ -44,6 +44,7 @@ POINTPILLARS_METRIC_PYTHON = env("POINTPILLARS_METRIC_PYTHON", POINTPILLARS_PYTH
 POINTPILLARS_DEFAULT_CONFIG = Path(env("POINTPILLARS_EVAL_CONFIG", str(POINTPILLARS_ROOT / "model/pipeline.config")))
 POINTPILLARS_DEFAULT_MODEL_DIR = Path(env("POINTPILLARS_MODEL_DIR", str(POINTPILLARS_ROOT / "model")))
 POINTPILLARS_CLASS_MAP = env("POINTPILLARS_CLASS_MAP", "{}")
+POINTPILLARS_INPUT_DIM = 4
 FUSIONDET_EVAL_CONFIG_JSON = env("FUSIONDET_EVAL_CONFIG_JSON", "")
 EXTERNAL_DATA_ROOT = Path(env("EXTERNAL_DATA_ROOT", "/home/user/cjg/conch_data"))
 MYSQL_BIN = env("MYSQL_BIN", "mysql")
@@ -656,6 +657,15 @@ def fusion_info_gt_arrays(info: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]
     return np.asarray(boxes, dtype=np.float32), np.asarray(names)
 
 
+def write_pointpillars_lidar(source: Path, target: Path, source_dim: int) -> None:
+    if source_dim < POINTPILLARS_INPUT_DIM:
+        raise ValueError(f"PointPillars requires at least {POINTPILLARS_INPUT_DIM} point features, got {source_dim}")
+    values = np.fromfile(source, dtype=np.float32)
+    if values.size % source_dim:
+        raise ValueError(f"Invalid point cloud {source}: {values.size} floats cannot form {source_dim}-D points")
+    values.reshape((-1, source_dim))[:, :POINTPILLARS_INPUT_DIM].astype(np.float32, copy=False).tofile(target)
+
+
 def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, load_dim: int | None, config_path: str | None) -> tuple[Path, Path, Path]:
     import numpy as np
     with fusion_infos_path.open("rb") as f:
@@ -669,10 +679,11 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     dataset_root = fusion_infos_path.parent
     identity4 = np.eye(4, dtype=np.float32)
     p2 = np.eye(4, dtype=np.float32)[:3]
+    source_point_dim = int(load_dim or POINTPILLARS_INPUT_DIM)
     for idx, info in enumerate(fusion_infos):
         lidar_src = fusion_info_lidar_path(info, dataset_root)
         lidar_name = f"{idx:06d}.bin"
-        ensure_link_or_copy(lidar_src, velodyne_dir / lidar_name)
+        write_pointpillars_lidar(lidar_src, velodyne_dir / lidar_name, source_point_dim)
         boxes, names = fusion_info_gt_arrays(info)
         locs = []
         dims = []
@@ -697,7 +708,7 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
         }
         pp_infos.append({
             "image_idx": idx,
-            "pointcloud_num_features": int(load_dim or 4),
+            "pointcloud_num_features": POINTPILLARS_INPUT_DIM,
             "velodyne_path": f"training/velodyne/{lidar_name}",
             "img_shape": [1920, 1080],
             "calib/R0_rect": identity4,
@@ -708,20 +719,12 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     info_path = pp_root / "kitti_infos_eval.pkl"
     with info_path.open("wb") as f:
         pickle.dump(pp_infos, f)
-    source_config = Path(config_path) if config_path and str(config_path).endswith(".config") else POINTPILLARS_DEFAULT_CONFIG
+    source_config = Path(config_path) if config_path else POINTPILLARS_DEFAULT_CONFIG
     if not source_config.is_absolute():
         source_config = POINTPILLARS_ROOT / source_config
+    if not source_config.is_file():
+        raise FileNotFoundError(f"PointPillars config not found: {source_config}")
     cfg_text = source_config.read_text(encoding="utf-8")
-    # The generated infos record the selected load dimension. Keep the reader
-    # config in sync so, for example, 6-D point clouds are not parsed as 4-D.
-    if load_dim is not None:
-        cfg_text, replaced = re.subn(
-            r"(num_point_features:\s*)\d+",
-            rf"\g<1>{load_dim}",
-            cfg_text,
-        )
-        if replaced == 0:
-            raise ValueError("PointPillars config has no num_point_features setting")
     cfg_text = re.sub(r'eval_input_reader:\s*\{(?P<body>.*?)\n\}', lambda m: _rewrite_pp_eval_reader(m, info_path, pp_root), cfg_text, flags=re.S)
     eval_config = work_dir / "pointpillars_eval.config"
     eval_config.write_text(cfg_text, encoding="utf-8")
@@ -810,16 +813,13 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     output_dir = work_dir / "pointpillars_fusion_metric"
     fusion_eval_config = write_fusiondet_eval_config_json(work_dir, payload.get("configPath"))
     log_path = work_dir / "pointpillars_eval.log"
-    checkpoint_path = str(payload.get("checkpointPath") or "")
-    model_dir = Path(payload.get("modelDir") or POINTPILLARS_DEFAULT_MODEL_DIR)
-    if checkpoint_path and not checkpoint_path.endswith(".pth"):
-        ckpt_path = Path(checkpoint_path)
-        if not ckpt_path.is_absolute():
-            ckpt_path = POINTPILLARS_ROOT / ckpt_path
-        if not ckpt_path.exists():
-            ckpt_path = None
-    else:
-        ckpt_path = None
+    # The platform stores the PointPillars weight directory in checkpointPath.
+    # modelDir remains accepted for backward-compatible API callers.
+    model_dir = Path(payload.get("modelDir") or payload.get("checkpointPath") or POINTPILLARS_DEFAULT_MODEL_DIR)
+    if not model_dir.is_absolute():
+        model_dir = POINTPILLARS_ROOT / model_dir
+    if not model_dir.is_dir():
+        raise FileNotFoundError(f"PointPillars model directory not found: {model_dir}")
     class_map = json.loads(POINTPILLARS_CLASS_MAP or "{}")
     raw_result_dir = work_dir / "pointpillars_raw_eval"
     raw_cmd = [
@@ -831,8 +831,6 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         f"--result_path={raw_result_dir}",
         "--save_fp_bev=False",
     ]
-    if ckpt_path:
-        raw_cmd.append(f"--ckpt_path={ckpt_path}")
     # eval.py is launched from second/pytorch, so the repository root is not
     # automatically importable. torchplus lives at that root.
     pointpillars_env = os.environ.copy()
