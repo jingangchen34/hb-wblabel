@@ -663,7 +663,19 @@ def write_pointpillars_lidar(source: Path, target: Path, source_dim: int, model_
     values = np.fromfile(source, dtype=np.float32)
     if values.size % source_dim:
         raise ValueError(f"Invalid point cloud {source}: {values.size} floats cannot form {source_dim}-D points")
-    values.reshape((-1, source_dim))[:, :model_input_dim].astype(np.float32, copy=False).tofile(target)
+    # Older evaluation workspaces may contain a target symlink left by the
+    # original PointPillars adapter. Writing directly to such a target would
+    # follow the link and overwrite the external source point cloud. Write a
+    # sibling regular file first, then atomically replace the target: os.replace
+    # replaces a symlink itself instead of following it.
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_target = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        values.reshape((-1, source_dim))[:, :model_input_dim].astype(np.float32, copy=False).tofile(temporary_target)
+        os.replace(temporary_target, target)
+    finally:
+        if temporary_target.exists() or temporary_target.is_symlink():
+            temporary_target.unlink()
 
 
 def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, source_point_dim: int, model_input_dim: int, config_path: str | None) -> tuple[Path, Path, Path]:
