@@ -291,6 +291,7 @@ def evaluate_sanet_metric(gt_boxes, pred_boxes, api, eval_config, output_dir, ve
     os.makedirs(output_dir, exist_ok=True)
 
     gt_boxes = api["add_center_dist"](gt_boxes)
+    gt_boxes = api["filter_eval_boxes"](gt_boxes, cfg.class_range)
     pred_boxes = api["add_center_dist"](pred_boxes)
     pred_boxes = api["filter_eval_boxes"](pred_boxes, cfg.class_range)
 

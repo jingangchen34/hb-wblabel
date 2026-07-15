@@ -98,7 +98,7 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
             center3D: {
                 x: Number(box.x ?? 0),
                 y: Number(box.y ?? 0),
-                z: Number(box.z ?? 0) + (source === 'PRED' ? dz / 2 : 0),
+                z: Number(box.z ?? 0),
             },
             size3D: {
                 x: Number(box.dx ?? box.xSize ?? 0),
