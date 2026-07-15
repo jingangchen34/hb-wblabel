@@ -344,7 +344,8 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
                     unmatched_gt[token].remove(nearest_index)
                 index += 1
             snapshot(score)
-        snapshot(0.0)
+        if not scans:
+            snapshot(1.0)
 
         unique_scans = {item["threshold"]: item for item in scans}
         recommendations = []
@@ -354,6 +355,8 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
             best = min(feasible, key=lambda item: (item["missRate"], item["threshold"], item["FP"]))
             recommendation = dict(best)
             recommendation["falseDetectionRateLimit"] = rate_limit
+            if not predictions:
+                recommendation["threshold"] = None
             recommendations.append(recommendation)
         results.append({"className": class_name, "recommendations": recommendations})
     return results

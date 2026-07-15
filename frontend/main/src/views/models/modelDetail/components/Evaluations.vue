@@ -80,7 +80,7 @@
               <tr v-for="row in safetyRows" :key="`${row.className}-${row.falseDetectionRateLimit}`">
                 <td>{{ row.className }}</td>
                 <td>{{ formatRate(row.falseDetectionRateLimit) }}</td>
-                <td>{{ Number(row.threshold).toFixed(4) }}</td>
+                <td>{{ formatThreshold(row.threshold) }}</td>
                 <td>{{ row.TP }} / {{ row.FP }} / {{ row.FN }}</td>
                 <td>{{ formatRate(row.falseDetectionRate) }}</td>
                 <td>{{ formatRate(row.missRate) }}</td>
@@ -173,6 +173,8 @@
   });
 
   const formatRate = (value: number) => `${(Number(value || 0) * 100).toFixed(2)}%`;
+  const formatThreshold = (value: number | null | undefined) =>
+    value === null || value === undefined ? '-' : Number(value).toFixed(4);
 
   const openEvaluationFrames = (dataIds: Array<number | string>) => {
     const record = selectedMetricsRecord.value;
