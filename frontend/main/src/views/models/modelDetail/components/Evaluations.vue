@@ -71,19 +71,39 @@
       <div class="metrics-detail">
         <div class="metrics-detail__summary">{{ metricsSummary }}</div>
         <pre v-if="selectedMetricsRecord?.metrics?.detectionText">{{ selectedMetricsRecord.metrics.detectionText }}</pre>
-        <div v-if="safetyRows.length" class="safety-metrics">
-          <h3>Per-class confidence recommendations</h3>
-          <div class="safety-metrics__hint">False detection rate = FP / (TP + FP). Each threshold minimizes miss rate within its limit.</div>
+        <div v-if="safetyGroups.length" class="safety-metrics">
+          <h3>Per-class confidence calibration</h3>
+          <div class="safety-metrics__hint">Choose the highest-recall threshold inside each mutually exclusive false-detection-rate band. False detection = FP / (TP + FP), miss = FN / (TP + FN).</div>
+          <Select v-model:value="selectedSafetyClass" class="safety-metrics__select">
+            <Select.Option v-for="group in safetyGroups" :key="group.className" :value="group.className">{{ group.className }}</Select.Option>
+          </Select>
+          <div v-if="prPolyline" class="pr-chart">
+            <svg viewBox="0 0 760 330" role="img" :aria-label="`${selectedSafetyClass} PR curve`">
+              <rect x="55" y="20" width="680" height="250" fill="#fafafa" />
+              <rect v-for="band in prBands" :key="band.label" x="55" :y="band.y" width="680" :height="band.height" :fill="band.color"><title>{{ band.label }}</title></rect>
+              <line x1="55" y1="270" x2="735" y2="270" stroke="#64748b" />
+              <line x1="55" y1="20" x2="55" y2="270" stroke="#64748b" />
+              <polyline :points="prPolyline" fill="none" stroke="#2563eb" stroke-width="2" />
+              <g v-for="marker in prMarkers" :key="marker.label">
+                <circle :cx="marker.x" :cy="marker.y" r="5" :fill="marker.color" stroke="#fff" stroke-width="1.5"><title>{{ marker.label }}: threshold {{ formatThreshold(marker.threshold) }}, recall {{ formatRate(marker.recall) }}, precision {{ formatRate(marker.precision) }}</title></circle>
+              </g>
+              <text x="395" y="310" text-anchor="middle">Recall</text>
+              <text x="18" y="145" text-anchor="middle" transform="rotate(-90 18 145)">Precision (90%-100%)</text>
+              <text x="55" y="289" text-anchor="middle">0%</text><text x="735" y="289" text-anchor="middle">100%</text>
+              <text x="48" y="24" text-anchor="end">100%</text><text x="48" y="274" text-anchor="end">90%</text>
+            </svg>
+          </div>
           <table>
-            <thead><tr><th>Class</th><th>FP limit</th><th>Confidence</th><th>TP / FP / FN</th><th>False detection</th><th>Miss</th><th>Frames</th></tr></thead>
+            <thead><tr><th>Class</th><th>FP band</th><th>Confidence</th><th>TP / FP / FN</th><th>Precision / Recall</th><th>False detection</th><th>Miss</th><th>Frames</th></tr></thead>
             <tbody>
-              <tr v-for="row in safetyRows" :key="`${row.className}-${row.falseDetectionRateLimit}`">
+              <tr v-for="row in safetyRows" :key="`${row.className}-${row.falseDetectionRateMin}-${row.falseDetectionRateMax}`">
                 <td>{{ row.className }}</td>
-                <td>{{ formatRate(row.falseDetectionRateLimit) }}</td>
+                <td>{{ formatBand(row) }}</td>
                 <td>{{ formatThreshold(row.threshold) }}</td>
-                <td>{{ row.TP }} / {{ row.FP }} / {{ row.FN }}</td>
-                <td>{{ formatRate(row.falseDetectionRate) }}</td>
-                <td>{{ formatRate(row.missRate) }}</td>
+                <td>{{ formatCounts(row) }}</td>
+                <td>{{ formatPrecisionRecall(row) }}</td>
+                <td>{{ formatOptionalRate(row.falseDetectionRate) }}</td>
+                <td>{{ formatOptionalRate(row.missRate) }}</td>
                 <td class="safety-metrics__actions">
                   <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
                   <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
@@ -123,6 +143,7 @@
   const evaluateVisible = ref(false);
   const metricsVisible = ref(false);
   const selectedMetricsRecord = ref<any>(null);
+  const selectedSafetyClass = ref('');
   const pageNo = ref(1);
   const pageSize = ref(10);
   const total = ref(0);
@@ -165,17 +186,59 @@
     return `Id ${record.id} / ${record.name || ''}`;
   });
 
+  const safetyGroups = computed<any[]>(() => selectedMetricsRecord.value?.metrics?.safetyThresholds || []);
+  const selectedSafetyGroup = computed(() =>
+    safetyGroups.value.find((group: any) => group.className === selectedSafetyClass.value) || safetyGroups.value[0],
+  );
   const safetyRows = computed(() => {
-    const groups = selectedMetricsRecord.value?.metrics?.safetyThresholds || [];
-    return groups.flatMap((group: any) =>
-      (group.recommendations || []).map((item: any) => ({ className: group.className, ...item })),
-    );
+    const group = selectedSafetyGroup.value;
+    return (group?.recommendations || []).map((item: any) => ({ className: group.className, ...item }));
   });
 
   const formatRate = (value: number) => `${(Number(value || 0) * 100).toFixed(2)}%`;
+  const formatOptionalRate = (value: number | null | undefined) =>
+    value === null || value === undefined ? '-' : formatRate(value);
   const formatThreshold = (value: number | null | undefined) =>
     value === null || value === undefined ? '-' : Number(value).toFixed(4);
+  const formatBand = (row: any) => {
+    const min = Number(row.falseDetectionRateMin || 0);
+    const max = Number(row.falseDetectionRateMax || 0);
+    return min === 0 && max === 0 ? '0%' : `(${formatRate(min)}, ${formatRate(max)}]`;
+  };
+  const formatCounts = (row: any) =>
+    row.TP === null || row.TP === undefined ? '-' : `${row.TP} / ${row.FP} / ${row.FN}`;
+  const formatPrecisionRecall = (row: any) =>
+    row.falseDetectionRate === null || row.falseDetectionRate === undefined
+      ? '-'
+      : `${formatRate(1 - row.falseDetectionRate)} / ${formatRate(1 - row.missRate)}`;
 
+  const prBands = [
+    { label: '(0%, 3%]', y: 20, height: 75, color: '#dcfce7' },
+    { label: '(3%, 5%]', y: 95, height: 50, color: '#ecfccb' },
+    { label: '(5%, 8%]', y: 145, height: 75, color: '#fef9c3' },
+    { label: '(8%, 10%]', y: 220, height: 50, color: '#ffedd5' },
+  ];
+  const prX = (recall: number) => 55 + Math.max(0, Math.min(1, recall)) * 680;
+  const prY = (precision: number) => 20 + Math.max(0, Math.min(0.1, 1 - precision)) * 2500;
+  const prPolyline = computed(() =>
+    (selectedSafetyGroup.value?.curve || [])
+      .map((point: any) => `${prX(Number(point.recall))},${prY(Number(point.precision))}`)
+      .join(' '),
+  );
+  const markerColors = ['#166534', '#16a34a', '#65a30d', '#ca8a04', '#ea580c'];
+  const prMarkers = computed(() =>
+    (selectedSafetyGroup.value?.recommendations || [])
+      .filter((row: any) => row.threshold !== null && row.threshold !== undefined && row.falseDetectionRate !== null)
+      .map((row: any, index: number) => ({
+        ...row,
+        label: formatBand(row),
+        precision: 1 - row.falseDetectionRate,
+        recall: 1 - row.missRate,
+        x: prX(1 - row.missRate),
+        y: prY(1 - row.falseDetectionRate),
+        color: markerColors[index],
+      })),
+  );
   const openEvaluationFrames = (dataIds: Array<number | string>) => {
     const record = selectedMetricsRecord.value;
     if (!record || !dataIds?.length) return;
@@ -197,6 +260,7 @@
 
   const openMetrics = (record: any) => {
     selectedMetricsRecord.value = record;
+    selectedSafetyClass.value = record?.metrics?.safetyThresholds?.[0]?.className || '';
     metricsVisible.value = true;
   };
 
@@ -446,6 +510,11 @@
       color: #666;
     }
 
+    &__select {
+      width: 220px;
+      margin-bottom: 12px;
+    }
+
     &__actions {
       display: flex;
       gap: 4px;
@@ -467,6 +536,21 @@
 
     th {
       background: #f7f8fa;
+    }
+  }
+
+  .pr-chart {
+    width: 100%;
+    max-width: 860px;
+    margin: 0 0 16px;
+    padding: 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
     }
   }
 

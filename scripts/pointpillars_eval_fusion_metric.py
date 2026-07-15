@@ -281,7 +281,13 @@ def _format_summary(metrics_summary):
     return "\n".join(lines)
 
 
-SAFETY_FALSE_DETECTION_LIMITS = (0.0, 0.03, 0.05, 0.08, 0.10)
+SAFETY_FALSE_DETECTION_BANDS = (
+    (0.0, 0.0),
+    (0.0, 0.03),
+    (0.03, 0.05),
+    (0.05, 0.08),
+    (0.08, 0.10),
+)
 
 
 def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold):
@@ -296,10 +302,11 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
         unmatched_gt = {token: set(range(len(boxes))) for token, boxes in frame_gt.items()}
         frame_fp = {token: 0 for token in sample_tokens}
         predictions = sorted(
-            [(float(box.detection_score), token, box)
+            [(int(max(0.0, min(1.0, float(box.detection_score))) * 10000) / 10000.0,
+              float(box.detection_score), token, box)
              for token in sample_tokens for box in pred_boxes[token]
              if box.detection_name == class_name],
-            key=lambda item: item[0],
+            key=lambda item: (item[0], item[1]),
             reverse=True,
         )
         total_gt = sum(len(boxes) for boxes in frame_gt.values())
@@ -321,10 +328,10 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
 
         index = 0
         while index < len(predictions):
-            score = predictions[index][0]
-            snapshot(float(np.nextafter(score, np.inf)))
-            while index < len(predictions) and predictions[index][0] == score:
-                _, token, prediction = predictions[index]
+            threshold = predictions[index][0]
+            snapshot(round(threshold + 0.0001, 4))
+            while index < len(predictions) and predictions[index][0] == threshold:
+                _, _, token, prediction = predictions[index]
                 nearest_index = None
                 nearest_distance = None
                 for gt_index in unmatched_gt[token]:
@@ -343,22 +350,54 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
                     tp += 1
                     unmatched_gt[token].remove(nearest_index)
                 index += 1
-            snapshot(score)
+            snapshot(threshold)
         if not scans:
             snapshot(1.0)
 
         unique_scans = {item["threshold"]: item for item in scans}
+        curve = []
+        for item in unique_scans.values():
+            curve.append({
+                "threshold": item["threshold"],
+                "precision": 1.0 - item["falseDetectionRate"],
+                "recall": 1.0 - item["missRate"],
+                "falseDetectionRate": item["falseDetectionRate"],
+                "missRate": item["missRate"],
+            })
+        if len(curve) > 400:
+            indices = sorted({round(index * (len(curve) - 1) / 399) for index in range(400)})
+            curve = [curve[index] for index in indices]
+
         recommendations = []
-        for rate_limit in SAFETY_FALSE_DETECTION_LIMITS:
-            feasible = [item for item in unique_scans.values()
-                        if item["falseDetectionRate"] <= rate_limit + 1e-12]
-            best = min(feasible, key=lambda item: (item["missRate"], item["threshold"], item["FP"]))
-            recommendation = dict(best)
-            recommendation["falseDetectionRateLimit"] = rate_limit
-            if not predictions:
-                recommendation["threshold"] = None
+        for rate_min, rate_max in SAFETY_FALSE_DETECTION_BANDS:
+            if rate_min == rate_max == 0.0:
+                feasible = [item for item in unique_scans.values()
+                            if item["falseDetectionRate"] <= 1e-12]
+            else:
+                feasible = [item for item in unique_scans.values()
+                            if rate_min + 1e-12 < item["falseDetectionRate"] <= rate_max + 1e-12]
+            if feasible:
+                best = min(feasible, key=lambda item: (item["missRate"], item["threshold"], item["FP"]))
+                recommendation = dict(best)
+                recommendation["available"] = bool(predictions)
+                if not predictions:
+                    recommendation["threshold"] = None
+            else:
+                recommendation = {
+                    "available": False,
+                    "threshold": None,
+                    "TP": None,
+                    "FP": None,
+                    "FN": None,
+                    "falseDetectionRate": None,
+                    "missRate": None,
+                    "falsePositiveFrameIndices": [],
+                    "missedFrameIndices": [],
+                }
+            recommendation["falseDetectionRateMin"] = rate_min
+            recommendation["falseDetectionRateMax"] = rate_max
             recommendations.append(recommendation)
-        results.append({"className": class_name, "recommendations": recommendations})
+        results.append({"className": class_name, "curve": curve, "recommendations": recommendations})
     return results
 
 
