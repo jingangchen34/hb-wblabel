@@ -137,7 +137,10 @@
             const trackID =
                 (userData as any).TrackID ?? userData.trackID ?? userData.trackId ?? userData.trackName ?? '';
 
-            pos.set(e.scale.x / 2, e.scale.y / 2, e.scale.z / 2);
+            // Annotate boxes use unit geometry and store their dimensions in
+            // object.scale. matrixWorld applies that scale, so the local
+            // top-right corner must remain at half a unit.
+            pos.set(0.5, 0.5, 0.5);
             pos.applyMatrix4(e.matrixWorld);
             pos.applyMatrix4(matrix);
             pos.x = ((pos.x + 1) / 2) * view.width;
