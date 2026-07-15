@@ -2,6 +2,7 @@
     <div class="main-view">
         <div ref="dom" style="height: 100%; width: 100%; position: relative"></div>
         <Labels :data="state.labels" v-show="editor.state.config.showLabel" />
+        <Labels :data="state.predictionLabels" />
         <Labels :data="state.lineLabels" />
         <!-- <Annotation :data="state.annotations" v-show="editor.state.config.showAnnotation" /> -->
         <slot name="info" v-if="$slots.info"></slot>
@@ -23,7 +24,7 @@
     import Info from './Info.vue';
     import Image2DMax from '../ImgView/Image2DMax.vue';
 
-    import { IUserData, IClassType } from 'pc-editor';
+    import { IUserData, IClassType, SourceType } from 'pc-editor';
 
     interface ILabel {
         name: string;
@@ -38,6 +39,7 @@
     let view = {} as MainRenderView;
     let state = reactive({
         labels: [] as ILabel[],
+        predictionLabels: [] as ILabel[],
         lineLabels: [] as ILabel[],
         annotations: [] as any[],
     });
@@ -103,6 +105,7 @@
         let objects = pc.getAnnotate3D();
 
         let list: ILabel[] = [];
+        let predictionList: ILabel[] = [];
         let list1: ILabel[] = [];
         let pos = new THREE.Vector3();
         let pos1 = new THREE.Vector3();
@@ -143,15 +146,23 @@
 
             if (Math.abs(pos.z) > 1) return;
 
+            const isPrediction = userData.sourceType === SourceType.MODEL;
+            const confidence = userData.confidence;
+            const predictionName = userData.modelClass || userData.classType || 'unknown';
+            const predictionText =
+                confidence === undefined || confidence === null
+                    ? predictionName
+                    : `${predictionName} ${Number(confidence).toFixed(2)}`;
             let obj = {
-                name: `ID:${trackID}`,
+                name: isPrediction ? predictionText : `ID:${trackID}`,
                 x: pos.x + 8,
                 y: pos.y - 8,
                 scale: 1,
             };
-            list.push(obj);
+            (isPrediction ? predictionList : list).push(obj);
         });
         state.labels = list;
+        state.predictionLabels = predictionList;
         state.lineLabels = list1;
     };
 

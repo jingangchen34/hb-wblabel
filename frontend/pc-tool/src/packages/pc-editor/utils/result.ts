@@ -169,7 +169,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
 
         userData.classType = classConfig?.name || '';
         userData.classId = obj.classId || '';
-        userData.confidence = obj.confidence || undefined;
+        userData.confidence = obj.confidence ?? undefined;
         userData.modelClass = obj.modelClass || '';
         userData.modelRun = obj.modelRun || '';
         userData.modelRunLabel = obj.modelRunLabel || '';
