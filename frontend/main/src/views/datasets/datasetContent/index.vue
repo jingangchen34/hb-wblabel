@@ -432,7 +432,7 @@
   const confidenceSlider = ref([0, 1]);
   const runRecordId = ref<any>();
   const type = ref<PageTypeEnum>(PageTypeEnum.list);
-  const { id, dataId } = query;
+  const { id, dataId, evaluationDataIds } = query;
   const [register, { openModal }] = useModal();
   const [frameRegister, { openModal: openFrameModal }] = useModal();
   const scrollRef = ref<Nullable<ScrollActionType>>(null);
@@ -667,7 +667,9 @@
       params.maxDataConfidence = filter.confidenceSlider[1];
     }
 
-    if (dataId) {
+    if (evaluationDataIds) {
+      params.ids = String(evaluationDataIds);
+    } else if (dataId) {
       params.ids = [dataId].toString();
     }
 

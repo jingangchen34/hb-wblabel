@@ -67,10 +67,31 @@
         <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
     </Modal>
-    <Modal v-model:visible="metricsVisible" title="Evaluation Metrics" width="900px" :footer="null">
+    <Modal v-model:visible="metricsVisible" title="Evaluation Metrics" width="1200px" :footer="null">
       <div class="metrics-detail">
         <div class="metrics-detail__summary">{{ metricsSummary }}</div>
         <pre v-if="selectedMetricsRecord?.metrics?.detectionText">{{ selectedMetricsRecord.metrics.detectionText }}</pre>
+        <div v-if="safetyRows.length" class="safety-metrics">
+          <h3>Per-class confidence recommendations</h3>
+          <div class="safety-metrics__hint">False detection rate = FP / (TP + FP). Each threshold minimizes miss rate within its limit.</div>
+          <table>
+            <thead><tr><th>Class</th><th>FP limit</th><th>Confidence</th><th>TP / FP / FN</th><th>False detection</th><th>Miss</th><th>Frames</th></tr></thead>
+            <tbody>
+              <tr v-for="row in safetyRows" :key="`${row.className}-${row.falseDetectionRateLimit}`">
+                <td>{{ row.className }}</td>
+                <td>{{ formatRate(row.falseDetectionRateLimit) }}</td>
+                <td>{{ Number(row.threshold).toFixed(4) }}</td>
+                <td>{{ row.TP }} / {{ row.FP }} / {{ row.FN }}</td>
+                <td>{{ formatRate(row.falseDetectionRate) }}</td>
+                <td>{{ formatRate(row.missRate) }}</td>
+                <td class="safety-metrics__actions">
+                  <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
+                  <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <pre v-if="selectedMetricsRecord?.metrics?.miouTable">{{ selectedMetricsRecord.metrics.miouTable }}</pre>
       </div>
     </Modal>
@@ -143,6 +164,29 @@
     if (!record) return '';
     return `Id ${record.id} / ${record.name || ''}`;
   });
+
+  const safetyRows = computed(() => {
+    const groups = selectedMetricsRecord.value?.metrics?.safetyThresholds || [];
+    return groups.flatMap((group: any) =>
+      (group.recommendations || []).map((item: any) => ({ className: group.className, ...item })),
+    );
+  });
+
+  const formatRate = (value: number) => `${(Number(value || 0) * 100).toFixed(2)}%`;
+
+  const openEvaluationFrames = (dataIds: Array<number | string>) => {
+    const record = selectedMetricsRecord.value;
+    if (!record || !dataIds?.length) return;
+    go({
+      path: RouteChildEnum.DATASETS_DATA as any,
+      query: {
+        id: record.datasetId,
+        evaluationId: record.id,
+        showEvaluation: 1,
+        evaluationDataIds: dataIds.join(','),
+      },
+    });
+  };
 
   const datasetTypes = computed(() => {
     if (props.datasetType === datasetTypeEnum.IMAGE) return datasetTypeEnum.IMAGE;
@@ -389,6 +433,38 @@
       background: #f7f8fa;
       border-radius: 4px;
       white-space: pre-wrap;
+    }
+  }
+
+  .safety-metrics {
+    margin: 16px 0;
+
+    &__hint {
+      margin-bottom: 8px;
+      color: #666;
+    }
+
+    &__actions {
+      display: flex;
+      gap: 4px;
+      white-space: nowrap;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      padding: 7px 8px;
+      border: 1px solid #e5e7eb;
+      text-align: left;
+    }
+
+    th {
+      background: #f7f8fa;
     }
   }
 

@@ -281,6 +281,84 @@ def _format_summary(metrics_summary):
     return "\n".join(lines)
 
 
+SAFETY_FALSE_DETECTION_LIMITS = (0.0, 0.03, 0.05, 0.08, 0.10)
+
+
+def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold):
+    sample_tokens = list(dict.fromkeys(list(gt_boxes.sample_tokens) + list(pred_boxes.sample_tokens)))
+    frame_indices = {token: index for index, token in enumerate(sample_tokens)}
+    results = []
+    for class_name in class_names:
+        frame_gt = {
+            token: [box for box in gt_boxes[token] if box.detection_name == class_name]
+            for token in sample_tokens
+        }
+        unmatched_gt = {token: set(range(len(boxes))) for token, boxes in frame_gt.items()}
+        frame_fp = {token: 0 for token in sample_tokens}
+        predictions = sorted(
+            [(float(box.detection_score), token, box)
+             for token in sample_tokens for box in pred_boxes[token]
+             if box.detection_name == class_name],
+            key=lambda item: item[0],
+            reverse=True,
+        )
+        total_gt = sum(len(boxes) for boxes in frame_gt.values())
+        tp = fp = 0
+        scans = []
+
+        def snapshot(threshold):
+            predicted_count = tp + fp
+            scans.append({
+                "threshold": float(threshold),
+                "TP": tp,
+                "FP": fp,
+                "FN": total_gt - tp,
+                "falseDetectionRate": float(fp / predicted_count) if predicted_count else 0.0,
+                "missRate": float((total_gt - tp) / total_gt) if total_gt else 0.0,
+                "falsePositiveFrameIndices": [frame_indices[token] for token in sample_tokens if frame_fp[token]],
+                "missedFrameIndices": [frame_indices[token] for token in sample_tokens if unmatched_gt[token]],
+            })
+
+        index = 0
+        while index < len(predictions):
+            score = predictions[index][0]
+            snapshot(float(np.nextafter(score, np.inf)))
+            while index < len(predictions) and predictions[index][0] == score:
+                _, token, prediction = predictions[index]
+                nearest_index = None
+                nearest_distance = None
+                for gt_index in unmatched_gt[token]:
+                    gt = frame_gt[token][gt_index]
+                    distance = float(
+                        ((prediction.translation[0] - gt.translation[0]) ** 2
+                         + (prediction.translation[1] - gt.translation[1]) ** 2) ** 0.5
+                    )
+                    if distance <= dist_threshold and (nearest_distance is None or distance < nearest_distance):
+                        nearest_index = gt_index
+                        nearest_distance = distance
+                if nearest_index is None:
+                    fp += 1
+                    frame_fp[token] += 1
+                else:
+                    tp += 1
+                    unmatched_gt[token].remove(nearest_index)
+                index += 1
+            snapshot(score)
+        snapshot(0.0)
+
+        unique_scans = {item["threshold"]: item for item in scans}
+        recommendations = []
+        for rate_limit in SAFETY_FALSE_DETECTION_LIMITS:
+            feasible = [item for item in unique_scans.values()
+                        if item["falseDetectionRate"] <= rate_limit + 1e-12]
+            best = min(feasible, key=lambda item: (item["missRate"], item["threshold"], item["FP"]))
+            recommendation = dict(best)
+            recommendation["falseDetectionRateLimit"] = rate_limit
+            recommendations.append(recommendation)
+        results.append({"className": class_name, "recommendations": recommendations})
+    return results
+
+
 def evaluate_sanet_metric(gt_boxes, pred_boxes, api, eval_config, output_dir, verbose=True):
     SANetDetectionConfig = api["SANetDetectionConfig"]
     DetectionMetricDataList = api["DetectionMetricDataList"]
@@ -294,6 +372,10 @@ def evaluate_sanet_metric(gt_boxes, pred_boxes, api, eval_config, output_dir, ve
     gt_boxes = api["filter_eval_boxes"](gt_boxes, cfg.class_range)
     pred_boxes = api["add_center_dist"](pred_boxes)
     pred_boxes = api["filter_eval_boxes"](pred_boxes, cfg.class_range)
+
+    safety_thresholds = analyze_safety_thresholds(
+        gt_boxes, pred_boxes, cfg.class_names, cfg.dist_th_tp
+    )
 
     metric_data_list = DetectionMetricDataList()
     for class_name in cfg.class_names:
@@ -321,6 +403,7 @@ def evaluate_sanet_metric(gt_boxes, pred_boxes, api, eval_config, output_dir, ve
 
     metrics_summary = metrics.serialize()
     metrics_summary["eval_time"] = time.time()
+    metrics_summary["safety_thresholds"] = safety_thresholds
 
     with open(os.path.join(output_dir, "metrics_summary.json"), "w") as f:
         json.dump(metrics_summary, f, indent=2, sort_keys=True)

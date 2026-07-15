@@ -547,7 +547,23 @@ def compact_detection_metrics(summary: dict[str, Any]) -> dict[str, Any]:
         "mAAE": tp_errors.get("attr_err"),
         "NDS": summary.get("nd_score"),
         "perClass": per_class,
+        "safetyThresholds": summary.get("safety_thresholds") or [],
     }
+
+
+def attach_safety_data_ids(metrics: dict[str, Any], data_ids: list[int]) -> None:
+    for class_result in metrics.get("safetyThresholds") or []:
+        for recommendation in class_result.get("recommendations") or []:
+            recommendation["falsePositiveDataIds"] = [
+                data_ids[int(index)]
+                for index in recommendation.get("falsePositiveFrameIndices") or []
+                if 0 <= int(index) < len(data_ids)
+            ]
+            recommendation["missedDataIds"] = [
+                data_ids[int(index)]
+                for index in recommendation.get("missedFrameIndices") or []
+                if 0 <= int(index) < len(data_ids)
+            ]
 
 
 def format_detection_metrics(metrics: dict[str, Any]) -> str:
@@ -1029,6 +1045,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
             continue
 
         checkpoint_metrics = parse_pointpillars_metrics(output_dir)
+        attach_safety_data_ids(checkpoint_metrics, ordered_data_ids)
         map_value = checkpoint_metrics.get("mAP")
         if not isinstance(map_value, (int, float)):
             candidate_results.append({
