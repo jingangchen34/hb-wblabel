@@ -859,6 +859,43 @@ def pointpillars_predictions_from_eval_annos(eval_annos_path: Path, data_ids: li
     return predictions
 
 
+def pointpillars_checkpoint_step(path: Path) -> int:
+    match = re.search(r"-(\d+)\.tckpt$", path.name)
+    return int(match.group(1)) if match else -1
+
+
+def resolve_pointpillars_checkpoints(weight_path: Path, latest_count: int = 15) -> tuple[str, Path, list[Path]]:
+    if weight_path.is_file():
+        if weight_path.suffix != ".tckpt" or not weight_path.name.startswith("voxelnet-"):
+            raise ValueError(f"PointPillars weight file must match voxelnet-*.tckpt: {weight_path}")
+        return "single", weight_path.parent, [weight_path]
+    if not weight_path.is_dir():
+        raise FileNotFoundError(f"PointPillars weight path not found: {weight_path}")
+    checkpoints = sorted(
+        weight_path.glob("voxelnet-*.tckpt"),
+        key=lambda path: (pointpillars_checkpoint_step(path), path.name),
+    )
+    if not checkpoints:
+        raise FileNotFoundError(f"No voxelnet-*.tckpt checkpoints found in: {weight_path}")
+    return "latest", weight_path, checkpoints[-latest_count:]
+
+
+def checkpoint_selection_text(mode: str, candidates: list[dict[str, Any]], selected: dict[str, Any]) -> str:
+    title = "Specified checkpoint evaluation" if mode == "single" else f"Latest {len(candidates)} checkpoints evaluation"
+    lines = [title + " (selected by FusionDet mAP):"]
+    for item in candidates:
+        marker = "*" if item.get("checkpoint") == selected.get("checkpoint") else " "
+        if item.get("status") == "SUCCESS":
+            lines.append(
+                f"{marker} {Path(item['checkpoint']).name}: step={item.get('step')}, "
+                f"mAP={float(item.get('mAP') or 0.0):.4f}, NDS={float(item.get('NDS') or 0.0):.4f}"
+            )
+        else:
+            lines.append(f"{marker} {Path(item['checkpoint']).name}: FAILURE - {item.get('error', 'unknown error')}")
+    lines.append(f"Selected checkpoint: {selected.get('checkpoint')}")
+    return "\n".join(lines)
+
+
 def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     evaluation_id = int(payload["evaluationId"])
     data_ids = [int(x) for x in payload.get("dataIds", [])]
@@ -886,47 +923,76 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         payload.get("configPath"),
         class_map,
     )
-    output_dir = work_dir / "pointpillars_fusion_metric"
-    # configPath is a PointPillars protobuf config. The final metric must use
-    # FusionDet's complete evaluation class list instead of treating that proto
-    # as a FusionDet Python config and silently falling back to four classes.
     fusion_eval_config = write_fusiondet_eval_config_json(work_dir, class_range=point_cloud_range)
     log_path = work_dir / "pointpillars_eval.log"
-    # The platform stores the PointPillars weight directory in checkpointPath.
-    # modelDir remains accepted for backward-compatible API callers.
-    model_dir = Path(payload.get("modelDir") or payload.get("checkpointPath") or POINTPILLARS_DEFAULT_MODEL_DIR)
-    if not model_dir.is_absolute():
-        model_dir = POINTPILLARS_ROOT / model_dir
-    if not model_dir.is_dir():
-        raise FileNotFoundError(f"PointPillars model directory not found: {model_dir}")
 
-    raw_result_dir = work_dir / "pointpillars_raw_eval"
-    raw_cmd = [
-        POINTPILLARS_RAW_EVAL_PYTHON,
-        str(POINTPILLARS_ROOT / "second/pytorch/eval.py"),
-        "evaluate",
-        f"--config_path={eval_config}",
-        f"--model_dir={model_dir}",
-        f"--result_path={raw_result_dir}",
-        "--save_fp_bev=False",
-    ]
-    # eval.py is launched from second/pytorch, so the repository root is not
-    # automatically importable. torchplus lives at that root.
+    weight_path = Path(payload.get("modelDir") or payload.get("checkpointPath") or POINTPILLARS_DEFAULT_MODEL_DIR)
+    if not weight_path.is_absolute():
+        weight_path = POINTPILLARS_ROOT / weight_path
+    selection_mode, model_dir, checkpoint_paths = resolve_pointpillars_checkpoints(weight_path, latest_count=15)
+
     pointpillars_env = os.environ.copy()
     existing_pythonpath = pointpillars_env.get("PYTHONPATH")
     pointpillars_env["PYTHONPATH"] = str(POINTPILLARS_ROOT)
     if existing_pythonpath:
         pointpillars_env["PYTHONPATH"] += os.pathsep + existing_pythonpath
-    raw_completed = subprocess.run(
-        raw_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True,
-        timeout=RUN_TIMEOUT_SEC, env=pointpillars_env,
-    )
-    candidates = sorted(raw_result_dir.glob("**/eval_annos.pkl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    eval_annos = candidates[0] if candidates else None
 
-    metric_cmd = []
-    metric_completed = None
-    if raw_completed.returncode == 0 and eval_annos:
+    checkpoint_root = work_dir / "pointpillars_checkpoint_runs"
+    candidate_results: list[dict[str, Any]] = []
+    successful_runs: list[dict[str, Any]] = []
+    log_parts = [
+        f"Weight input: {weight_path}",
+        f"Selection mode: {selection_mode}",
+        "Candidate checkpoints: " + ", ".join(str(path) for path in checkpoint_paths),
+    ]
+
+    for index, checkpoint_path in enumerate(checkpoint_paths):
+        step = pointpillars_checkpoint_step(checkpoint_path)
+        run_dir = checkpoint_root / f"{index:02d}_{checkpoint_path.stem}"
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+        raw_result_dir = run_dir / "raw_eval"
+        output_dir = run_dir / "fusion_metric"
+        raw_cmd = [
+            POINTPILLARS_RAW_EVAL_PYTHON,
+            str(POINTPILLARS_ROOT / "second/pytorch/eval.py"),
+            "evaluate",
+            f"--config_path={eval_config}",
+            f"--model_dir={model_dir}",
+            f"--ckpt_path={checkpoint_path}",
+            f"--result_path={raw_result_dir}",
+            "--save_fp_bev=False",
+        ]
+        raw_completed = subprocess.run(
+            raw_cmd,
+            cwd=str(POINTPILLARS_ROOT),
+            text=True,
+            capture_output=True,
+            timeout=RUN_TIMEOUT_SEC,
+            env=pointpillars_env,
+        )
+        log_parts.extend([
+            "\n$ " + " ".join(raw_cmd),
+            "\nSTDOUT:\n" + raw_completed.stdout,
+            "\nSTDERR:\n" + raw_completed.stderr,
+        ])
+        eval_annos_candidates = sorted(
+            raw_result_dir.glob("**/eval_annos.pkl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        eval_annos = eval_annos_candidates[0] if eval_annos_candidates else None
+        if raw_completed.returncode != 0 or eval_annos is None:
+            error = raw_completed.stderr[-1000:] if raw_completed.returncode != 0 else "eval_annos.pkl was not produced"
+            candidate_results.append({
+                "checkpoint": str(checkpoint_path),
+                "step": step,
+                "status": "FAILURE",
+                "error": error,
+            })
+            log_path.write_text("\n".join(log_parts), encoding="utf-8")
+            continue
+
         metric_cmd = [
             POINTPILLARS_METRIC_PYTHON,
             str(Path(__file__).resolve().parent / "pointpillars_eval_fusion_metric.py"),
@@ -940,34 +1006,84 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         if fusion_eval_config:
             metric_cmd.extend(["--eval_config_json", str(fusion_eval_config)])
         metric_completed = subprocess.run(
-            metric_cmd, cwd=str(POINTPILLARS_ROOT), text=True, capture_output=True,
-            timeout=RUN_TIMEOUT_SEC, env=pointpillars_env,
+            metric_cmd,
+            cwd=str(POINTPILLARS_ROOT),
+            text=True,
+            capture_output=True,
+            timeout=RUN_TIMEOUT_SEC,
+            env=pointpillars_env,
         )
-
-    log_parts = [
-        "$ " + " ".join(raw_cmd),
-        "\nSTDOUT:\n" + raw_completed.stdout,
-        "\nSTDERR:\n" + raw_completed.stderr,
-    ]
-    if metric_cmd:
         log_parts.extend([
             "\n$ " + " ".join(metric_cmd),
-            "\nSTDOUT:\n" + (metric_completed.stdout if metric_completed else ""),
-            "\nSTDERR:\n" + (metric_completed.stderr if metric_completed else ""),
+            "\nSTDOUT:\n" + metric_completed.stdout,
+            "\nSTDERR:\n" + metric_completed.stderr,
         ])
+        if metric_completed.returncode != 0:
+            candidate_results.append({
+                "checkpoint": str(checkpoint_path),
+                "step": step,
+                "status": "FAILURE",
+                "error": metric_completed.stderr[-1000:],
+            })
+            log_path.write_text("\n".join(log_parts), encoding="utf-8")
+            continue
+
+        checkpoint_metrics = parse_pointpillars_metrics(output_dir)
+        map_value = checkpoint_metrics.get("mAP")
+        if not isinstance(map_value, (int, float)):
+            candidate_results.append({
+                "checkpoint": str(checkpoint_path),
+                "step": step,
+                "status": "FAILURE",
+                "error": "FusionDet metric did not produce a numeric mAP",
+            })
+            log_path.write_text("\n".join(log_parts), encoding="utf-8")
+            continue
+        public_result = {
+            "checkpoint": str(checkpoint_path),
+            "step": step,
+            "status": "SUCCESS",
+            "mAP": float(map_value),
+            "NDS": checkpoint_metrics.get("NDS"),
+        }
+        candidate_results.append(public_result)
+        successful_runs.append({
+            **public_result,
+            "metrics": checkpoint_metrics,
+            "evalAnnots": eval_annos,
+            "outputDir": output_dir,
+        })
+        log_path.write_text("\n".join(log_parts), encoding="utf-8")
+
+    if not successful_runs:
+        log_path.write_text("\n".join(log_parts), encoding="utf-8")
+        raise RuntimeError(f"All PointPillars checkpoint evaluations failed, see {log_path}")
+
+    best_run = max(successful_runs, key=lambda item: (item["mAP"], item["step"]))
+    selection_text = checkpoint_selection_text(selection_mode, candidate_results, best_run)
+    log_parts.extend(["\n" + selection_text])
     log_path.write_text("\n".join(log_parts), encoding="utf-8")
-    if raw_completed.returncode != 0:
-        raise RuntimeError(f"PointPillars raw evaluation failed, see {log_path}: {raw_completed.stderr[-1000:]}")
-    if not eval_annos:
-        raise RuntimeError(f"PointPillars raw evaluation did not produce eval_annos.pkl, see {log_path}")
-    if metric_completed is None or metric_completed.returncode != 0:
-        stderr = metric_completed.stderr[-1000:] if metric_completed else "metric process was not started"
-        raise RuntimeError(f"PointPillars fusion metric failed, see {log_path}: {stderr}")
-    predictions = pointpillars_predictions_from_eval_annos(eval_annos, ordered_data_ids, class_map) if eval_annos else {}
+
+    best_metrics = dict(best_run["metrics"])
+    metric_text = best_metrics.get("detectionText") or format_detection_metrics(best_metrics)
+    best_metrics.update({
+        "detectionText": selection_text + "\n\n" + metric_text,
+        "requested": metrics,
+        "engine": "pointpillars",
+        "sourcePointDim": source_point_dim,
+        "modelInputDim": model_input_dim,
+        "pointCloudRange": point_cloud_range,
+        "checkpointSelectionMode": selection_mode,
+        "checkpointCandidateLimit": 15 if selection_mode == "latest" else 1,
+        "selectedCheckpoint": best_run["checkpoint"],
+        "selectedStep": best_run["step"],
+        "checkpointResults": candidate_results,
+    })
+    predictions = pointpillars_predictions_from_eval_annos(best_run["evalAnnots"], ordered_data_ids, class_map)
     return {
-        "metrics": {**parse_pointpillars_metrics(output_dir), "requested": metrics, "engine": "pointpillars", "sourcePointDim": source_point_dim, "modelInputDim": model_input_dim, "pointCloudRange": point_cloud_range},
+        "metrics": best_metrics,
         "miouDataCount": miou_count,
-        "outputPath": str(output_dir),
+        "outputPath": str(best_run["outputDir"]),
         "logPath": str(log_path),
         "predictions": predictions,
     }

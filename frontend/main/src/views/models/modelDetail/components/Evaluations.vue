@@ -61,8 +61,8 @@
         <Form.Item v-if="isPointPillarsModel" label="PointPillars Config" required>
           <Input v-model:value="evaluateForm.configPath" placeholder="/home/user/.../xyres_0.16_raw.proto" />
         </Form.Item>
-        <Form.Item v-if="isPointPillarsModel" label="PointPillars Weight Directory" required>
-          <Input v-model:value="evaluateForm.checkpointPath" placeholder="/data/.../model_dir" />
+        <Form.Item v-if="isPointPillarsModel" label="PointPillars Weight Path" required>
+          <Input v-model:value="evaluateForm.checkpointPath" placeholder="Directory: latest 15; .tckpt file: single weight" />
         </Form.Item>
         <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
@@ -303,7 +303,7 @@
       return;
     }
     if (isPointPillarsModel.value && (!evaluateForm.configPath.trim() || !evaluateForm.checkpointPath.trim())) {
-      createMessage.warning('Please provide the PointPillars config and weight directory.');
+      createMessage.warning('Please provide the PointPillars config and weight path.');
       return;
     }
     if (!evaluateForm.sourcePointDim || (isPointPillarsModel.value && (!evaluateForm.modelInputDim || evaluateForm.modelInputDim > evaluateForm.sourcePointDim))) {
