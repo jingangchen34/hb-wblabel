@@ -149,6 +149,12 @@
   const total = ref(0);
   const datasetOptions = ref<any[]>([]);
   const matchedCount = ref(0);
+  const pointPillarsDefaults = {
+    configPath: '/home/user/cjg/code/pointpillars_hb/second/configs/xyres_0.16_raw.proto',
+    checkpointPath: '/data/pp_data/path/2026_mini3_v2/model_dir',
+    sourcePointDim: 6,
+    modelInputDim: 4,
+  };
   const evaluateForm = reactive({
     sourceMode: 'SPLIT',
     datasetIds: [] as number[],
@@ -156,8 +162,8 @@
     metrics: ['mAP', 'miou'] as string[],
     sourcePointDim: 6 as number | undefined,
     modelInputDim: 4 as number | undefined,
-    configPath: '',
-    checkpointPath: '',
+    configPath: pointPillarsDefaults.configPath,
+    checkpointPath: pointPillarsDefaults.checkpointPath,
   });
 
   const isPointPillarsModel = computed(() => {
@@ -396,6 +402,13 @@
   const openEvaluateModal = async () => {
     if (isPointPillarsModel.value) {
       evaluateForm.metrics = ['mAP'];
+      try {
+        const saved = window.localStorage.getItem(`pointpillars-evaluation:${props.modelId}`);
+        Object.assign(evaluateForm, pointPillarsDefaults, saved ? JSON.parse(saved) : {});
+      } catch {
+        Object.assign(evaluateForm, pointPillarsDefaults);
+        window.localStorage.removeItem(`pointpillars-evaluation:${props.modelId}`);
+      }
     } else if (!evaluateForm.metrics.includes('miou')) {
       evaluateForm.metrics = ['mAP', 'miou'];
     }
@@ -441,6 +454,17 @@
           splitType: evaluateForm.sourceMode === 'SPLIT' ? evaluateForm.splitType : undefined,
         },
       });
+      if (isPointPillarsModel.value) {
+        window.localStorage.setItem(
+          `pointpillars-evaluation:${props.modelId}`,
+          JSON.stringify({
+            configPath: evaluateForm.configPath,
+            checkpointPath: evaluateForm.checkpointPath,
+            sourcePointDim: evaluateForm.sourcePointDim,
+            modelInputDim: evaluateForm.modelInputDim,
+          }),
+        );
+      }
       createMessage.success('Evaluation task created.');
       evaluateVisible.value = false;
       await loadList();
