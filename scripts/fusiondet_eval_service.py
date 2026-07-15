@@ -820,7 +820,10 @@ def pointpillars_predictions_from_eval_annos(eval_annos_path: Path, data_ids: li
     annos = data.get("dt_annos", data) if isinstance(data, dict) else data
     predictions: dict[str, list[dict[str, Any]]] = {}
     for data_id, anno in zip(data_ids, annos):
-        boxes = np.asarray(anno.get("box3d_lidar", []), dtype=np.float32)
+        boxes = np.asarray(
+            anno.get("box3d_lidar", anno.get("boxes_lidar", [])),
+            dtype=np.float32,
+        )
         names = list(anno.get("name", []))
         scores = np.asarray(anno.get("score", []), dtype=np.float32)
         frame_preds = []
@@ -909,7 +912,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     if raw_completed.returncode == 0 and eval_annos:
         metric_cmd = [
             POINTPILLARS_METRIC_PYTHON,
-            str(POINTPILLARS_ROOT / "second/pytorch/eval_fusion_metric.py"),
+            str(Path(__file__).resolve().parent / "pointpillars_eval_fusion_metric.py"),
             "from_eval_annos",
             "--pp_eval_annos_path", str(eval_annos),
             "--fusion_infos_path", str(fusion_infos_path),
