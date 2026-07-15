@@ -43,7 +43,17 @@ POINTPILLARS_RAW_EVAL_PYTHON = env("POINTPILLARS_RAW_EVAL_PYTHON", "/home/user/a
 POINTPILLARS_METRIC_PYTHON = env("POINTPILLARS_METRIC_PYTHON", POINTPILLARS_PYTHON)
 POINTPILLARS_DEFAULT_CONFIG = Path(env("POINTPILLARS_EVAL_CONFIG", str(POINTPILLARS_ROOT / "model/pipeline.config")))
 POINTPILLARS_DEFAULT_MODEL_DIR = Path(env("POINTPILLARS_MODEL_DIR", str(POINTPILLARS_ROOT / "model")))
-POINTPILLARS_CLASS_MAP = env("POINTPILLARS_CLASS_MAP", "{}")
+DEFAULT_POINTPILLARS_CLASS_MAP = {
+    "MineTruck": "mining_truck",
+    "Excavator": "excavator_body",
+    "Pedestrian": "pedestrian",
+    "Truck": "truck",
+    "Car": "car",
+}
+POINTPILLARS_CLASS_MAP = env(
+    "POINTPILLARS_CLASS_MAP",
+    json.dumps(DEFAULT_POINTPILLARS_CLASS_MAP, ensure_ascii=False),
+)
 POINTPILLARS_INPUT_DIM = 4
 FUSIONDET_EVAL_CONFIG_JSON = env("FUSIONDET_EVAL_CONFIG_JSON", "")
 EXTERNAL_DATA_ROOT = Path(env("EXTERNAL_DATA_ROOT", "/home/user/cjg/conch_data"))
@@ -678,7 +688,14 @@ def write_pointpillars_lidar(source: Path, target: Path, source_dim: int, model_
             temporary_target.unlink()
 
 
-def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, source_point_dim: int, model_input_dim: int, config_path: str | None) -> tuple[Path, Path, Path]:
+def get_pointpillars_class_map() -> dict[str, str]:
+    class_map = json.loads(POINTPILLARS_CLASS_MAP or "{}")
+    if not isinstance(class_map, dict):
+        raise ValueError("POINTPILLARS_CLASS_MAP must be a JSON object")
+    return {str(source): str(target) for source, target in class_map.items()}
+
+
+def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, source_point_dim: int, model_input_dim: int, config_path: str | None, class_map: dict[str, str]) -> tuple[Path, Path, Path]:
     import numpy as np
     with fusion_infos_path.open("rb") as f:
         data = pickle.load(f)
@@ -691,11 +708,16 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     dataset_root = fusion_infos_path.parent
     identity4 = np.eye(4, dtype=np.float32)
     p2 = np.eye(4, dtype=np.float32)[:3]
+    fusion_to_pointpillars = {fusion_name: pointpillars_name for pointpillars_name, fusion_name in class_map.items()}
     for idx, info in enumerate(fusion_infos):
         lidar_src = fusion_info_lidar_path(info, dataset_root)
         lidar_name = f"{idx:06d}.bin"
         write_pointpillars_lidar(lidar_src, velodyne_dir / lidar_name, source_point_dim, model_input_dim)
         boxes, names = fusion_info_gt_arrays(info)
+        pointpillars_names = np.asarray(
+            [fusion_to_pointpillars.get(str(name), str(name)) for name in names],
+            dtype=str,
+        )
         locs = []
         dims = []
         rots = []
@@ -706,7 +728,7 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
             rots.append(-yaw)
         count = len(locs)
         annos = {
-            "name": names.astype(str) if count else np.asarray([], dtype=str),
+            "name": pointpillars_names if count else np.asarray([], dtype=str),
             "truncated": np.zeros((count,), dtype=np.float32),
             "occluded": np.zeros((count,), dtype=np.int32),
             "alpha": np.zeros((count,), dtype=np.float32),
@@ -835,9 +857,20 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     metrics = [str(metric) for metric in payload.get("metrics") or ["mAP"] if str(metric) == "mAP"] or ["mAP"]
     fusion_infos_path, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, ["mAP"])
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
-    eval_config, _, _ = build_pointpillars_eval_assets(evaluation_id, fusion_infos_path, source_point_dim, model_input_dim, payload.get("configPath"))
+    class_map = get_pointpillars_class_map()
+    eval_config, _, _ = build_pointpillars_eval_assets(
+        evaluation_id,
+        fusion_infos_path,
+        source_point_dim,
+        model_input_dim,
+        payload.get("configPath"),
+        class_map,
+    )
     output_dir = work_dir / "pointpillars_fusion_metric"
-    fusion_eval_config = write_fusiondet_eval_config_json(work_dir, payload.get("configPath"))
+    # configPath is a PointPillars protobuf config. The final metric must use
+    # FusionDet's complete evaluation class list instead of treating that proto
+    # as a FusionDet Python config and silently falling back to four classes.
+    fusion_eval_config = write_fusiondet_eval_config_json(work_dir)
     log_path = work_dir / "pointpillars_eval.log"
     # The platform stores the PointPillars weight directory in checkpointPath.
     # modelDir remains accepted for backward-compatible API callers.
@@ -846,7 +879,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         model_dir = POINTPILLARS_ROOT / model_dir
     if not model_dir.is_dir():
         raise FileNotFoundError(f"PointPillars model directory not found: {model_dir}")
-    class_map = json.loads(POINTPILLARS_CLASS_MAP or "{}")
+
     raw_result_dir = work_dir / "pointpillars_raw_eval"
     raw_cmd = [
         POINTPILLARS_RAW_EVAL_PYTHON,
