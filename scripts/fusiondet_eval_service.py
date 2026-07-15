@@ -695,7 +695,7 @@ def get_pointpillars_class_map() -> dict[str, str]:
     return {str(source): str(target) for source, target in class_map.items()}
 
 
-def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, source_point_dim: int, model_input_dim: int, config_path: str | None, class_map: dict[str, str]) -> tuple[Path, Path, Path]:
+def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, source_point_dim: int, model_input_dim: int, config_path: str | None, class_map: dict[str, str]) -> tuple[Path, Path, Path, list[float]]:
     import numpy as np
     with fusion_infos_path.open("rb") as f:
         data = pickle.load(f)
@@ -758,6 +758,12 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     if not source_config.is_file():
         raise FileNotFoundError(f"PointPillars config not found: {source_config}")
     cfg_text = source_config.read_text(encoding="utf-8")
+    range_matches = re.findall(r"point_cloud_range\s*:\s*\[([^\]]+)\]", cfg_text)
+    if not range_matches:
+        raise ValueError(f"PointPillars config has no point_cloud_range setting: {source_config}")
+    point_cloud_range = [float(value.strip()) for value in range_matches[0].split(",")]
+    if len(point_cloud_range) != 6:
+        raise ValueError(f"PointPillars point_cloud_range must contain 6 values: {source_config}")
     dimensions = [int(value) for value in re.findall(r"num_point_features:\s*(\d+)", cfg_text)]
     if not dimensions:
         raise ValueError(f"PointPillars config has no num_point_features setting: {source_config}")
@@ -766,7 +772,7 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     cfg_text = re.sub(r'eval_input_reader:\s*\{(?P<body>.*?)\n\}', lambda m: _rewrite_pp_eval_reader(m, info_path, pp_root), cfg_text, flags=re.S)
     eval_config = work_dir / "pointpillars_eval.config"
     eval_config.write_text(cfg_text, encoding="utf-8")
-    return eval_config, pp_root, info_path
+    return eval_config, pp_root, info_path, point_cloud_range
 
 
 def _rewrite_pp_eval_reader(match: re.Match, info_path: Path, root_path: Path) -> str:
@@ -791,10 +797,18 @@ def parse_pointpillars_metrics(output_dir: Path) -> dict[str, Any]:
 
 
 
-def write_fusiondet_eval_config_json(work_dir: Path, config_path: str | None = None) -> Path | None:
+def write_fusiondet_eval_config_json(work_dir: Path, config_path: str | None = None, class_range: list[float] | None = None) -> Path | None:
     if FUSIONDET_EVAL_CONFIG_JSON:
         path = Path(FUSIONDET_EVAL_CONFIG_JSON)
-        return path if path.is_absolute() else FUSIONDET_ROOT / path
+        path = path if path.is_absolute() else FUSIONDET_ROOT / path
+        if not path.is_file():
+            return None
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        if class_range is not None:
+            cfg["class_range"] = class_range
+        out = work_dir / "eval_detection_config.json"
+        out.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return out
     config_path = config_path or "configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py"
     config_file = Path(config_path)
     if not config_file.is_absolute():
@@ -810,6 +824,9 @@ def write_fusiondet_eval_config_json(work_dir: Path, config_path: str | None = N
     cfg = getattr(mod, "eval_detection_configs", None)
     if not cfg:
         return None
+    cfg = dict(cfg)
+    if class_range is not None:
+        cfg["class_range"] = class_range
     out = work_dir / "eval_detection_config.json"
     out.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     return out
@@ -861,7 +878,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     fusion_infos_path, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, ["mAP"])
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
     class_map = get_pointpillars_class_map()
-    eval_config, _, _ = build_pointpillars_eval_assets(
+    eval_config, _, _, point_cloud_range = build_pointpillars_eval_assets(
         evaluation_id,
         fusion_infos_path,
         source_point_dim,
@@ -873,7 +890,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     # configPath is a PointPillars protobuf config. The final metric must use
     # FusionDet's complete evaluation class list instead of treating that proto
     # as a FusionDet Python config and silently falling back to four classes.
-    fusion_eval_config = write_fusiondet_eval_config_json(work_dir)
+    fusion_eval_config = write_fusiondet_eval_config_json(work_dir, class_range=point_cloud_range)
     log_path = work_dir / "pointpillars_eval.log"
     # The platform stores the PointPillars weight directory in checkpointPath.
     # modelDir remains accepted for backward-compatible API callers.
@@ -948,7 +965,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"PointPillars fusion metric failed, see {log_path}: {stderr}")
     predictions = pointpillars_predictions_from_eval_annos(eval_annos, ordered_data_ids, class_map) if eval_annos else {}
     return {
-        "metrics": {**parse_pointpillars_metrics(output_dir), "requested": metrics, "engine": "pointpillars", "sourcePointDim": source_point_dim, "modelInputDim": model_input_dim},
+        "metrics": {**parse_pointpillars_metrics(output_dir), "requested": metrics, "engine": "pointpillars", "sourcePointDim": source_point_dim, "modelInputDim": model_input_dim, "pointCloudRange": point_cloud_range},
         "miouDataCount": miou_count,
         "outputPath": str(output_dir),
         "logPath": str(log_path),
