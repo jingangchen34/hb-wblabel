@@ -376,6 +376,7 @@
     if (query.evaluationId) {
       params.evaluationId = query.evaluationId;
       params.showEvaluation = query.showEvaluation || 1;
+      params.evaluationDataIds = query.evaluationDataIds;
     }
     goToTool(params, props.info?.type);
   };

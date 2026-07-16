@@ -551,7 +551,21 @@ def compact_detection_metrics(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def attach_safety_data_ids(metrics: dict[str, Any], data_ids: list[int]) -> None:
+def attach_safety_data_ids(
+    metrics: dict[str, Any],
+    data_ids: list[int],
+    parent_by_data_id: dict[int, int] | None = None,
+) -> None:
+    if parent_by_data_id is None:
+        frames = fetch_platform_frames(data_ids)
+        parent_by_data_id = {
+            data_id: int(frames.get(data_id, {}).get("parentId") or 0)
+            for data_id in data_ids
+        }
+
+    def scene_ids(frame_ids: list[int]) -> list[int]:
+        return list(dict.fromkeys(parent_by_data_id.get(data_id) or data_id for data_id in frame_ids))
+
     for class_result in metrics.get("safetyThresholds") or []:
         for recommendation in class_result.get("recommendations") or []:
             recommendation["falsePositiveDataIds"] = [
@@ -564,6 +578,8 @@ def attach_safety_data_ids(metrics: dict[str, Any], data_ids: list[int]) -> None
                 for index in recommendation.get("missedFrameIndices") or []
                 if 0 <= int(index) < len(data_ids)
             ]
+            recommendation["falsePositiveSceneIds"] = scene_ids(recommendation["falsePositiveDataIds"])
+            recommendation["missedSceneIds"] = scene_ids(recommendation["missedDataIds"])
 
 
 def format_detection_metrics(metrics: dict[str, Any]) -> str:
@@ -954,6 +970,11 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         pointpillars_env["PYTHONPATH"] += os.pathsep + existing_pythonpath
 
     checkpoint_root = work_dir / "pointpillars_checkpoint_runs"
+    platform_frames = fetch_platform_frames(ordered_data_ids)
+    parent_by_data_id = {
+        data_id: int(platform_frames.get(data_id, {}).get("parentId") or 0)
+        for data_id in ordered_data_ids
+    }
     candidate_results: list[dict[str, Any]] = []
     successful_runs: list[dict[str, Any]] = []
     log_parts = [
@@ -1045,7 +1066,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
             continue
 
         checkpoint_metrics = parse_pointpillars_metrics(output_dir)
-        attach_safety_data_ids(checkpoint_metrics, ordered_data_ids)
+        attach_safety_data_ids(checkpoint_metrics, ordered_data_ids, parent_by_data_id)
         map_value = checkpoint_metrics.get("mAP")
         if not isinstance(map_value, (int, float)):
             candidate_results.append({

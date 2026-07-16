@@ -105,8 +105,8 @@
                 <td>{{ formatOptionalRate(row.falseDetectionRate) }}</td>
                 <td>{{ formatOptionalRate(row.missRate) }}</td>
                 <td class="safety-metrics__actions">
-                  <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
-                  <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
+                  <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds, row.falsePositiveSceneIds)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
+                  <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds, row.missedSceneIds)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
                 </td>
               </tr>
             </tbody>
@@ -122,6 +122,7 @@
   import { Checkbox, Form, Input, InputNumber, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
   import { Button } from '/@@/Button';
   import { getDateTime } from '/@/utils/business/timeFormater';
+  import { goToTool } from '/@/utils/business';
   import {
     createModelEvaluationApi,
     deleteModelEvaluationApi,
@@ -245,9 +246,21 @@
         color: markerColors[index],
       })),
   );
-  const openEvaluationFrames = (dataIds: Array<number | string>) => {
+  const openEvaluationFrames = (dataIds: Array<number | string>, sceneIds?: Array<number | string>) => {
     const record = selectedMetricsRecord.value;
     if (!record || !dataIds?.length) return;
+    if (!sceneIds?.length) {
+      goToTool({
+        datasetId: record.datasetId,
+        dataId: dataIds[0],
+        dataType: 'frame',
+        type: 'readOnly',
+        evaluationId: record.id,
+        showEvaluation: 1,
+        evaluationDataIds: dataIds.join(','),
+      }, props.datasetType);
+      return;
+    }
     go({
       path: RouteChildEnum.DATASETS_DATA as any,
       query: {
@@ -255,6 +268,7 @@
         evaluationId: record.id,
         showEvaluation: 1,
         evaluationDataIds: dataIds.join(','),
+        evaluationSceneIds: sceneIds?.length ? sceneIds.join(',') : undefined,
       },
     });
   };
@@ -266,9 +280,25 @@
 
   const openMetrics = (record: any) => {
     selectedMetricsRecord.value = record;
-    selectedSafetyClass.value = record?.metrics?.safetyThresholds?.[0]?.className || '';
+    const groups = record?.metrics?.safetyThresholds || [];
+    const saved = window.sessionStorage.getItem(`evaluation-safety-class:${record.id}`);
+    const groupSupport = (group: any) => Math.max(
+      0,
+      ...(group?.recommendations || []).map(
+        (row: any) => row.available ? (row.TP || 0) + (row.FP || 0) + (row.FN || 0) : 0,
+      ),
+    );
+    const preferred = groups.find((group: any) => group.className === saved)
+      || groups.reduce((best: any, group: any) => groupSupport(group) > groupSupport(best) ? group : best, groups[0]);
+    selectedSafetyClass.value = preferred?.className || '';
     metricsVisible.value = true;
   };
+
+  watch(selectedSafetyClass, (className) => {
+    if (className && selectedMetricsRecord.value?.id) {
+      window.sessionStorage.setItem(`evaluation-safety-class:${selectedMetricsRecord.value.id}`, className);
+    }
+  });
 
   const deleteEvaluation = (record: any) => {
     Modal.confirm({

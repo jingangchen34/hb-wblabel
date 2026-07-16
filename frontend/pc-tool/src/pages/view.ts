@@ -58,6 +58,11 @@ export function view(): IPageHandler {
             }
             editor.bsState.seriesFrameId = sceneId;
             await loadDataFromFrameSeries(sceneId);
+            if (query.evaluationDataIds) {
+                const allowedIds = new Set(String(query.evaluationDataIds).split(',').filter(Boolean));
+                const filteredFrames = editor.state.frames.filter((frame) => allowedIds.has(String(frame.id)));
+                if (filteredFrames.length) editor.state.frames = filteredFrames;
+            }
             if (sceneId !== dataId) {
                 const selectedIndex = editor.state.frames.findIndex((frame) => frame.id === dataId);
                 if (selectedIndex > 0) {
