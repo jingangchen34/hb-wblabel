@@ -381,16 +381,10 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
                 recommendation = dict(best)
                 recommendation["available"] = bool(predictions)
                 if not predictions:
-                    recommendation["threshold"] = None
+                    recommendation.pop("threshold", None)
             else:
                 recommendation = {
                     "available": False,
-                    "threshold": None,
-                    "TP": None,
-                    "FP": None,
-                    "FN": None,
-                    "falseDetectionRate": None,
-                    "missRate": None,
                     "falsePositiveFrameIndices": [],
                     "missedFrameIndices": [],
                 }
