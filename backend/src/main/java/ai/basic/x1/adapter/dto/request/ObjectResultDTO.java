@@ -1,5 +1,6 @@
 package ai.basic.x1.adapter.dto.request;
 
+import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import cn.hutool.json.JSONObject;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,6 +28,9 @@ public class ObjectResultDTO {
     @Valid
     @NotEmpty
     private List<DataInfo> dataInfos;
+
+    /** Explicit consent to promote displayed model predictions into ground truth. */
+    private Boolean promoteModelResults;
 
     @Data
     @AllArgsConstructor
@@ -56,6 +60,8 @@ public class ObjectResultDTO {
         private String frontId;
 
         private Long classId;
+
+        private DataAnnotationObjectSourceTypeEnum sourceType;
 
         private JSONObject classAttributes;
     }

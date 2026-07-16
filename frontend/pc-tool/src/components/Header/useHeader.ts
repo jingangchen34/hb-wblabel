@@ -362,7 +362,13 @@ export default function useHeader() {
                 let host = location.host || location.hostname;
                 let pathname = location.pathname;
                 let protocol = location.protocol;
-                location.href = `${protocol}//${host + pathname}?recordId=${recordId}`;
+                const url = new URL(`${protocol}//${host + pathname}${location.search}`);
+                url.searchParams.set('recordId', recordId);
+                url.searchParams.delete('type');
+                if (url.searchParams.get('evaluationId')) {
+                    url.searchParams.set('humanReview', '1');
+                }
+                location.href = url.toString();
             } else {
                 editor.showMsg('warning', data.message || `Operation Failed`);
             }

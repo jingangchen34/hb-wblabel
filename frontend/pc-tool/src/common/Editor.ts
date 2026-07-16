@@ -8,6 +8,86 @@ import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
 import MultiFrameMergeManager from './MultiFrameMergeManager';
 
+const EVALUATION_GT_MATCH_DISTANCE_METERS = 2;
+
+function isEvaluationPrediction(object: any) {
+    return (
+        object?.source === 'PRED' ||
+        object?.sourceId === EVALUATION_PRED_SOURCE_ID ||
+        object?.sourceType === SourceType.MODEL
+    );
+}
+
+function evaluationClassKey(object: any) {
+    return String(
+        object?.classId || object?.classType || object?.modelClass || object?.meta?.classType || '',
+    ).toLowerCase();
+}
+
+function evaluationCenterDistance(left: any, right: any) {
+    const a = left?.center3D;
+    const b = right?.center3D;
+    if (!a || !b) return Number.POSITIVE_INFINITY;
+    return Math.hypot(
+        Number(a.x) - Number(b.x),
+        Number(a.y) - Number(b.y),
+        Number(a.z) - Number(b.z),
+    );
+}
+
+function evaluationObjectIdentity(object: any) {
+    const values = [
+        object?.center3D?.x,
+        object?.center3D?.y,
+        object?.center3D?.z,
+        object?.size3D?.x,
+        object?.size3D?.y,
+        object?.size3D?.z,
+        object?.rotation3D?.x,
+        object?.rotation3D?.y,
+        object?.rotation3D?.z,
+    ].map((value) => Number(value || 0).toFixed(4));
+    return evaluationClassKey(object) + '|' + values.join('|');
+}
+
+function prepareEvaluationGroundTruth(objects: any[], humanReview: boolean) {
+    if (!humanReview) return objects.filter((object) => !isEvaluationPrediction(object));
+
+    const groundTruths = objects.filter((object) => !isEvaluationPrediction(object));
+    const predictions = objects.filter(isEvaluationPrediction);
+    const merged = [...groundTruths];
+    const matchedGroundTruthIndexes = new Set<number>();
+
+    predictions.forEach((prediction) => {
+        let bestIndex = -1;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        groundTruths.forEach((groundTruth, index) => {
+            if (matchedGroundTruthIndexes.has(index)) return;
+            if (evaluationClassKey(groundTruth) !== evaluationClassKey(prediction)) return;
+            const distance = evaluationCenterDistance(groundTruth, prediction);
+            if (distance <= EVALUATION_GT_MATCH_DISTANCE_METERS && distance < bestDistance) {
+                bestIndex = index;
+                bestDistance = distance;
+            }
+        });
+
+        if (bestIndex >= 0) {
+            matchedGroundTruthIndexes.add(bestIndex);
+            merged[bestIndex] = prediction;
+        } else {
+            merged.push(prediction);
+        }
+    });
+
+    const identities = new Set<string>();
+    return merged.filter((object) => {
+        const identity = evaluationObjectIdentity(object);
+        if (identities.has(identity)) return false;
+        identities.add(identity);
+        return true;
+    });
+}
+
 export default class Editor extends BaseEditor {
     businessManager: BusinessManager;
     dataManager: DataManager;
@@ -42,7 +122,10 @@ export default class Editor extends BaseEditor {
                 .then(() => {
                     this.loadManager.updateTrackMap(this.state.frames);
                     if (this.currentTrack) {
-                        this.dispatchEvent({ type: Event.CURRENT_TRACK_CHANGE, data: this.currentTrack });
+                        this.dispatchEvent({
+                            type: Event.CURRENT_TRACK_CHANGE,
+                            data: this.currentTrack,
+                        });
                     }
                 })
                 .finally(() => {
@@ -80,17 +163,28 @@ export default class Editor extends BaseEditor {
             if (new Date(dataMeta.queryTime).getTime() > new Date(queryTime).getTime())
                 queryTime = dataMeta.queryTime;
 
-            // result object
+            // Evaluation predictions are display-only unless the user explicitly entered
+            // human review from the evaluation page.
+            const humanReview = bsState.query.humanReview === '1';
             let data = utils.convertAnnotate2Object(annotates, this);
+            if (bsState.query.showEvaluation || bsState.query.evaluationId) {
+                data = prepareEvaluationGroundTruth(data, humanReview);
+            }
             let infos = [] as any[];
             let dataAnnotations = [] as any[];
             data.forEach((e) => {
                 let classConfig = this.getClassType(e.classId || e.classType || '');
+                const promotedPrediction = isEvaluationPrediction(e);
                 e.uuid = undefined;
                 e.sourceId = this.state.config.withoutTaskId;
                 e.sourceType = SourceType.DATA_FLOW;
                 e.modelRun = '';
                 e.modelRunLabel = '';
+                e.confidence = undefined;
+                e.modelClass = '';
+                if (promotedPrediction) {
+                    e.trackName = String(e.trackId || e.trackID || '');
+                }
                 let objectV2 = utils.translateToObjectV2(e, classConfig);
                 infos.push({
                     id: undefined,
@@ -124,6 +218,7 @@ export default class Editor extends BaseEditor {
         let objectInfo = {
             datasetId: bsState.datasetId,
             dataInfos: dataInfos,
+            promoteModelResults: bsState.query.humanReview === '1',
         };
         bsState.saving = true;
         try {

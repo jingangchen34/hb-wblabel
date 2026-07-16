@@ -7,6 +7,7 @@ import ai.basic.x1.adapter.dto.response.DataAnnotationObjectResponseDTO;
 import ai.basic.x1.adapter.dto.response.DataAnnotationResultDTO;
 import ai.basic.x1.entity.DataAnnotationClassificationBO;
 import ai.basic.x1.entity.DataAnnotationObjectBO;
+import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import ai.basic.x1.usecase.DataAnnotationUseCase;
 import ai.basic.x1.util.DefaultConverter;
 import cn.hutool.core.collection.CollUtil;
@@ -33,6 +34,14 @@ public class DataAnnotationController {
 
     @PostMapping("save")
     public List<DataAnnotationObjectResponseDTO> save(@Validated @RequestBody ObjectResultDTO objectResultDTO) {
+        boolean containsModelResults = objectResultDTO.getDataInfos().stream()
+                .filter(dataInfo -> CollUtil.isNotEmpty(dataInfo.getObjects()))
+                .flatMap(dataInfo -> dataInfo.getObjects().stream())
+                .anyMatch(object -> DataAnnotationObjectSourceTypeEnum.MODEL.equals(object.getSourceType()));
+        if (containsModelResults && !Boolean.TRUE.equals(objectResultDTO.getPromoteModelResults())) {
+            throw new IllegalArgumentException(
+                    "Model predictions are display-only. Enter human review and explicitly promote them before saving.");
+        }
         List<DataAnnotationClassificationDTO> dataAnnotationClassificationDTOS = convertToDataAnnotation(objectResultDTO);
         List<DataAnnotationObjectDTO> dataAnnotationObjectDTOs = convertToDataAnnotationObject(objectResultDTO);
         var deleteDataIds = objectResultDTO.getDataInfos()
