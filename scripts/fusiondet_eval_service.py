@@ -145,9 +145,17 @@ def fetch_gt_objects(data_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
         f"WHERE data_id IN ({sql_list(data_ids)}) AND source_id=-1"
     )
     result: dict[int, list[dict[str, Any]]] = {}
+    seen: dict[int, set[tuple[Any, ...]]] = {}
     for data_id, attrs in rows:
         try:
-            result.setdefault(int(data_id), []).append(json.loads(attrs))
+            data_id = int(data_id)
+            obj = json.loads(attrs)
+            box, name, _ = object_to_box(obj)
+            identity = (name, *(round(value, 5) for value in box))
+            if identity in seen.setdefault(data_id, set()):
+                continue
+            seen[data_id].add(identity)
+            result.setdefault(data_id, []).append(obj)
         except json.JSONDecodeError:
             continue
     return result
