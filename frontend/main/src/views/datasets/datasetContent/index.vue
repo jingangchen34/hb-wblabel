@@ -345,6 +345,7 @@
   import {
     datasetApi,
     datasetObjectApi,
+    getDataByIds,
     deleteBatchDataset,
     getLockedByDataset,
     getMoelResultApi,
@@ -433,6 +434,7 @@
   const runRecordId = ref<any>();
   const type = ref<PageTypeEnum>(PageTypeEnum.list);
   const { id, dataId, evaluationDataIds, evaluationSceneIds } = query;
+  let evaluationSceneFilterIds: string | undefined;
   const [register, { openModal }] = useModal();
   const [frameRegister, { openModal: openFrameModal }] = useModal();
   const scrollRef = ref<Nullable<ScrollActionType>>(null);
@@ -636,6 +638,27 @@
     modelId.value = selectOptions.value?.[0]?.id;
   };
 
+  const resolveEvaluationSceneFilterIds = async () => {
+    if (evaluationSceneFilterIds !== undefined) return evaluationSceneFilterIds;
+    const frameIds = String(evaluationDataIds || '').split(',').filter(Boolean);
+    if (frameIds.length) {
+      try {
+        const frames = await getDataByIds({ dataIds: frameIds.join(',') });
+        const parentIds = Array.from(
+          new Set((frames || []).map((frame: any) => String(frame.parentId || frame.id)).filter(Boolean)),
+        );
+        if (parentIds.length) {
+          evaluationSceneFilterIds = parentIds.join(',');
+          return evaluationSceneFilterIds;
+        }
+      } catch {
+        // Fall back to the scene ids persisted with the evaluation.
+      }
+    }
+    evaluationSceneFilterIds = String(evaluationSceneIds || '');
+    return evaluationSceneFilterIds;
+  };
+
   const fetchList = async (filter?, fetchType?) => {
     open();
     let params = {
@@ -668,7 +691,7 @@
     }
 
     if (evaluationSceneIds || evaluationDataIds) {
-      params.ids = String(evaluationSceneIds || evaluationDataIds);
+      params.ids = await resolveEvaluationSceneFilterIds();
     } else if (dataId) {
       params.ids = [dataId].toString();
     }

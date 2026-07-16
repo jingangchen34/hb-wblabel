@@ -409,10 +409,6 @@ def evaluate_sanet_metric(gt_boxes, pred_boxes, api, eval_config, output_dir, ve
     pred_boxes = api["add_center_dist"](pred_boxes)
     pred_boxes = api["filter_eval_boxes"](pred_boxes, cfg.class_range)
 
-    safety_thresholds = analyze_safety_thresholds(
-        gt_boxes, pred_boxes, cfg.class_names, cfg.dist_th_tp
-    )
-
     metric_data_list = DetectionMetricDataList()
     for class_name in cfg.class_names:
         for dist_th in cfg.dist_ths:
@@ -438,8 +434,15 @@ def evaluate_sanet_metric(gt_boxes, pred_boxes, api, eval_config, output_dir, ve
             metrics.add_label_tp(class_name, metric_name, tp)
 
     metrics_summary = metrics.serialize()
+    classes_with_ap = [
+        class_name
+        for class_name in cfg.class_names
+        if float((metrics_summary.get("mean_dist_aps") or {}).get(class_name) or 0.0) > 0.0
+    ]
     metrics_summary["eval_time"] = time.time()
-    metrics_summary["safety_thresholds"] = safety_thresholds
+    metrics_summary["safety_thresholds"] = analyze_safety_thresholds(
+        gt_boxes, pred_boxes, classes_with_ap, cfg.dist_th_tp
+    )
 
     with open(os.path.join(output_dir, "metrics_summary.json"), "w") as f:
         json.dump(metrics_summary, f, indent=2, sort_keys=True)

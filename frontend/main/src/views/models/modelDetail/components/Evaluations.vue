@@ -193,7 +193,15 @@
     return `Id ${record.id} / ${record.name || ''}`;
   });
 
-  const safetyGroups = computed<any[]>(() => selectedMetricsRecord.value?.metrics?.safetyThresholds || []);
+  const safetyGroups = computed<any[]>(() => {
+    const metrics = selectedMetricsRecord.value?.metrics;
+    const classesWithAp = new Set(
+      (metrics?.perClass || [])
+        .filter((row: any) => Number(row.AP || 0) > 0)
+        .map((row: any) => row.className),
+    );
+    return (metrics?.safetyThresholds || []).filter((group: any) => classesWithAp.has(group.className));
+  });
   const selectedSafetyGroup = computed(() =>
     safetyGroups.value.find((group: any) => group.className === selectedSafetyClass.value) || safetyGroups.value[0],
   );
@@ -280,7 +288,7 @@
 
   const openMetrics = (record: any) => {
     selectedMetricsRecord.value = record;
-    const groups = record?.metrics?.safetyThresholds || [];
+    const groups = safetyGroups.value;
     const saved = window.sessionStorage.getItem(`evaluation-safety-class:${record.id}`);
     const groupSupport = (group: any) => Math.max(
       0,
