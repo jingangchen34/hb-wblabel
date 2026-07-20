@@ -343,7 +343,12 @@ export default function useHeader() {
         };
 
         if (editor.state.isSeriesFrame) {
-            config.dataIds = [bsState.seriesFrameId ?? ''];
+            let seriesFrameId = bsState.seriesFrameId ?? '';
+            if (bsState.query.evaluationDataIds) {
+                const dataInfo = await api.getDataInfo(frame.id);
+                seriesFrameId = dataInfo?.parentId ? String(dataInfo.parentId) : frame.id;
+            }
+            config.dataIds = [seriesFrameId];
             config.operateItemType = 'SCENE';
         }
 

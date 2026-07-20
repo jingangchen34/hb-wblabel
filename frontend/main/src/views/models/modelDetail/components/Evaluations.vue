@@ -105,8 +105,8 @@
                 <td>{{ formatOptionalRate(row.falseDetectionRate) }}</td>
                 <td>{{ formatOptionalRate(row.missRate) }}</td>
                 <td class="safety-metrics__actions">
-                  <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds, row.falsePositiveSceneIds)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
-                  <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds, row.missedSceneIds)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
+                  <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
+                  <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
                 </td>
               </tr>
             </tbody>
@@ -254,31 +254,18 @@
         color: markerColors[index],
       })),
   );
-  const openEvaluationFrames = (dataIds: Array<number | string>, sceneIds?: Array<number | string>) => {
+  const openEvaluationFrames = (dataIds: Array<number | string>) => {
     const record = selectedMetricsRecord.value;
     if (!record || !dataIds?.length) return;
-    if (!sceneIds?.length) {
-      goToTool({
-        datasetId: record.datasetId,
-        dataId: dataIds[0],
-        dataType: 'frame',
-        type: 'readOnly',
-        evaluationId: record.id,
-        showEvaluation: 1,
-        evaluationDataIds: dataIds.join(','),
-      }, props.datasetType);
-      return;
-    }
-    go({
-      path: RouteChildEnum.DATASETS_DATA as any,
-      query: {
-        id: record.datasetId,
-        evaluationId: record.id,
-        showEvaluation: 1,
-        evaluationDataIds: dataIds.join(','),
-        evaluationSceneIds: sceneIds?.length ? sceneIds.join(',') : undefined,
-      },
-    });
+    goToTool({
+      datasetId: record.datasetId,
+      dataId: dataIds[0],
+      dataType: 'frame',
+      type: 'readOnly',
+      evaluationId: record.id,
+      showEvaluation: 1,
+      evaluationDataIds: dataIds.join(','),
+    }, props.datasetType);
   };
 
   const datasetTypes = computed(() => {

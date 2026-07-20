@@ -332,6 +332,30 @@ export async function getDataInfo(dataId: string) {
     return (dataResp.data || [])[0];
 }
 
+export async function getEvaluationFrameInfos(dataIds: string[]) {
+    if (!dataIds.length) return [];
+    const batches = [] as string[][];
+    for (let index = 0; index < dataIds.length; index += 200) {
+        batches.push(dataIds.slice(index, index + 200));
+    }
+    const responses = await Promise.all(
+        batches.map((batch) => get('/api/data/listByIds', { dataIds: batch.join(',') })),
+    );
+    const dataById = responses
+        .flatMap((response) => response.data || [])
+        .reduce((map: Record<string, any>, data: any) => {
+            map[String(data.id)] = data;
+            return map;
+        }, {});
+    return dataIds
+        .map((dataId) => dataById[String(dataId)])
+        .filter(Boolean)
+        .map((data: any) => ({
+            ...buildFrameInfo(data, String(data.datasetId)),
+            parentId: data.parentId ? String(data.parentId) : '',
+        }));
+}
+
 export async function getDataName(dataId: string) {
     const data = await getDataInfo(dataId);
     return data?.name || '';

@@ -48,6 +48,16 @@ export function view(): IPageHandler {
         const { query } = editor.bsState;
 
         const dataId = query.dataId;
+        if (query.evaluationDataIds) {
+            const requestedIds = String(query.evaluationDataIds).split(',').filter(Boolean);
+            const frames = await api.getEvaluationFrameInfos(requestedIds);
+            if (!frames.length) throw new BSError('', 'load evaluation frames error');
+            editor.state.isSeriesFrame = true;
+            editor.bsState.seriesFrameId = String((frames[0] as any).parentId || '');
+            editor.bsState.seriesFrameName = 'Evaluation anomalies (' + frames.length + ')';
+            editor.setFrames(frames);
+            return;
+        }
         if (['frame', 'scene'].some((e) => new RegExp(e, 'i').test(query.dataType))) {
             // 连续帧
             editor.state.isSeriesFrame = true;
@@ -58,11 +68,6 @@ export function view(): IPageHandler {
             }
             editor.bsState.seriesFrameId = sceneId;
             await loadDataFromFrameSeries(sceneId);
-            if (query.evaluationDataIds) {
-                const allowedIds = new Set(String(query.evaluationDataIds).split(',').filter(Boolean));
-                const filteredFrames = editor.state.frames.filter((frame) => allowedIds.has(String(frame.id)));
-                if (filteredFrames.length) editor.state.frames = filteredFrames;
-            }
             if (sceneId !== dataId) {
                 const selectedIndex = editor.state.frames.findIndex((frame) => frame.id === dataId);
                 if (selectedIndex > 0) {
