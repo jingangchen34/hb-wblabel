@@ -46,9 +46,22 @@ POINTPILLARS_DEFAULT_MODEL_DIR = Path(env("POINTPILLARS_MODEL_DIR", str(POINTPIL
 DEFAULT_POINTPILLARS_CLASS_MAP = {
     "MineTruck": "mining_truck",
     "Excavator": "excavator_body",
+    "Vehicle2": "excavator_body",
+    "Vehicle2_head": "excavator_head",
     "Pedestrian": "pedestrian",
+    "Vehicle": "truck",
+    "Vehicle1": "truck",
     "Truck": "truck",
+    "Tram": "truck",
     "Car": "car",
+}
+
+FUSION_TO_POINTPILLARS_CLASS_MAP = {
+    "mining_truck": "MineTruck",
+    "excavator_body": "Excavator",
+    "pedestrian": "Pedestrian",
+    "truck": "Truck",
+    "car": "Car",
 }
 POINTPILLARS_CLASS_MAP = env(
     "POINTPILLARS_CLASS_MAP",
@@ -748,14 +761,19 @@ def build_pointpillars_eval_assets(evaluation_id: int, fusion_infos_path: Path, 
     dataset_root = fusion_infos_path.parent
     identity4 = np.eye(4, dtype=np.float32)
     p2 = np.eye(4, dtype=np.float32)[:3]
-    fusion_to_pointpillars = {fusion_name: pointpillars_name for pointpillars_name, fusion_name in class_map.items()}
     for idx, info in enumerate(fusion_infos):
         lidar_src = fusion_info_lidar_path(info, dataset_root)
         lidar_name = f"{idx:06d}.bin"
         write_pointpillars_lidar(lidar_src, velodyne_dir / lidar_name, source_point_dim, model_input_dim)
         boxes, names = fusion_info_gt_arrays(info)
         pointpillars_names = np.asarray(
-            [fusion_to_pointpillars.get(str(name), str(name)) for name in names],
+            [
+                FUSION_TO_POINTPILLARS_CLASS_MAP.get(
+                    class_map.get(str(name), str(name)),
+                    str(name),
+                )
+                for name in names
+            ],
             dtype=str,
         )
         locs = []
