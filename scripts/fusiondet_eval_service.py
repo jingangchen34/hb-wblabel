@@ -189,7 +189,7 @@ def object_to_box(obj: dict[str, Any]) -> tuple[list[float], str, int]:
         float(rot.get("z", 0.0)),
     ]
     meta = obj.get("meta") or {}
-    return box, str(obj.get("modelClass") or obj.get("label") or meta.get("classType") or "unknown"), int(contour.get("pointN") or 1)
+    return box, str(obj.get("modelClass") or obj.get("className") or obj.get("label") or meta.get("classType") or "unknown"), int(contour.get("pointN") or 1)
 
 
 def yaw_to_quaternion(yaw: float) -> list[float]:
