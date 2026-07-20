@@ -13,6 +13,7 @@
         <result column="miou_data_count" property="miouDataCount" />
         <result column="config_path" property="configPath" />
         <result column="checkpoint_path" property="checkpointPath" />
+        <result column="checkpoint_selection_classes" property="checkpointSelectionClasses" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
         <result column="source_point_dim" property="sourcePointDim" />
         <result column="model_input_dim" property="modelInputDim" />
         <result column="metrics" property="metrics" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />

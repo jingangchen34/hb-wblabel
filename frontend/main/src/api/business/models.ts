@@ -255,6 +255,7 @@ export const createModelEvaluationApi = (params: {
   name?: string;
   configPath?: string;
   checkpointPath?: string;
+  checkpointSelectionClasses?: string[];
   metrics?: string[];
   sourcePointDim?: number;
   modelInputDim?: number;

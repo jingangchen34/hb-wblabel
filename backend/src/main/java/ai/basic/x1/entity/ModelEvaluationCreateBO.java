@@ -21,6 +21,9 @@ public class ModelEvaluationCreateBO {
 
     private String checkpointPath;
 
+    /** Classes whose mean AP is used to select the best checkpoint. Empty means overall mAP. */
+    private List<String> checkpointSelectionClasses;
+
     private List<String> metrics;
 
     /** Raw point-cloud feature dimension used to parse each .bin file. */

@@ -938,20 +938,32 @@ def resolve_pointpillars_checkpoints(weight_path: Path, latest_count: int = 15) 
     return "latest", weight_path, checkpoints[-latest_count:]
 
 
-def checkpoint_selection_text(mode: str, candidates: list[dict[str, Any]], selected: dict[str, Any]) -> str:
+def checkpoint_selection_text(mode: str, candidates: list[dict[str, Any]], selected: dict[str, Any], selection_classes: list[str]) -> str:
     title = "Specified checkpoint evaluation" if mode == "single" else f"Latest {len(candidates)} checkpoints evaluation"
-    lines = [title + " (selected by FusionDet mAP):"]
+    selection_label = f"mean AP of {', '.join(selection_classes)}" if selection_classes else "FusionDet mAP"
+    lines = [title + f" (selected by {selection_label}):"]
     for item in candidates:
         marker = "*" if item.get("checkpoint") == selected.get("checkpoint") else " "
         if item.get("status") == "SUCCESS":
             lines.append(
                 f"{marker} {Path(item['checkpoint']).name}: step={item.get('step')}, "
+                f"selectionAP={float(item.get('selectionScore') or 0.0):.4f}, "
                 f"mAP={float(item.get('mAP') or 0.0):.4f}, NDS={float(item.get('NDS') or 0.0):.4f}"
             )
         else:
             lines.append(f"{marker} {Path(item['checkpoint']).name}: FAILURE - {item.get('error', 'unknown error')}")
     lines.append(f"Selected checkpoint: {selected.get('checkpoint')}")
     return "\n".join(lines)
+
+
+def checkpoint_selection_score(metrics: dict[str, Any], selection_classes: list[str]) -> float:
+    if not selection_classes:
+        return float(metrics["mAP"])
+    per_class = {str(row.get("className")): row.get("AP") for row in metrics.get("perClass") or []}
+    missing = [name for name in selection_classes if not isinstance(per_class.get(name), (int, float))]
+    if missing:
+        raise ValueError(f"Selected checkpoint classes have no AP result: {', '.join(missing)}")
+    return sum(float(per_class[name]) for name in selection_classes) / len(selection_classes)
 
 
 def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
@@ -970,6 +982,9 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     if model_input_dim > source_point_dim:
         raise ValueError(f"modelInputDim {model_input_dim} exceeds sourcePointDim {source_point_dim}")
     metrics = [str(metric) for metric in payload.get("metrics") or ["mAP"] if str(metric) == "mAP"] or ["mAP"]
+    selection_classes = list(dict.fromkeys(
+        str(name).strip() for name in payload.get("checkpointSelectionClasses") or [] if str(name).strip()
+    ))
     fusion_infos_path, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, ["mAP"])
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
     class_map = get_pointpillars_class_map()
@@ -1103,12 +1118,14 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
             })
             log_path.write_text("\n".join(log_parts), encoding="utf-8")
             continue
+        selection_score = checkpoint_selection_score(checkpoint_metrics, selection_classes)
         public_result = {
             "checkpoint": str(checkpoint_path),
             "step": step,
             "status": "SUCCESS",
             "mAP": float(map_value),
             "NDS": checkpoint_metrics.get("NDS"),
+            "selectionScore": selection_score,
         }
         candidate_results.append(public_result)
         successful_runs.append({
@@ -1123,8 +1140,8 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         log_path.write_text("\n".join(log_parts), encoding="utf-8")
         raise RuntimeError(f"All PointPillars checkpoint evaluations failed, see {log_path}")
 
-    best_run = max(successful_runs, key=lambda item: (item["mAP"], item["step"]))
-    selection_text = checkpoint_selection_text(selection_mode, candidate_results, best_run)
+    best_run = max(successful_runs, key=lambda item: (item["selectionScore"], item["mAP"], item["step"]))
+    selection_text = checkpoint_selection_text(selection_mode, candidate_results, best_run, selection_classes)
     log_parts.extend(["\n" + selection_text])
     log_path.write_text("\n".join(log_parts), encoding="utf-8")
 
@@ -1139,6 +1156,8 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
         "pointCloudRange": point_cloud_range,
         "checkpointSelectionMode": selection_mode,
         "checkpointCandidateLimit": 15 if selection_mode == "latest" else 1,
+        "checkpointSelectionClasses": selection_classes,
+        "checkpointSelectionScore": best_run["selectionScore"],
         "selectedCheckpoint": best_run["checkpoint"],
         "selectedStep": best_run["step"],
         "checkpointResults": candidate_results,

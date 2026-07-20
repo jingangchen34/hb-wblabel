@@ -42,6 +42,9 @@ public class ModelEvaluationRecord {
 
     private String checkpointPath;
 
+    @TableField(value = "checkpoint_selection_classes", typeHandler = JacksonTypeHandler.class)
+    private JSONArray checkpointSelectionClasses;
+
     private Integer sourcePointDim;
 
     private Integer modelInputDim;

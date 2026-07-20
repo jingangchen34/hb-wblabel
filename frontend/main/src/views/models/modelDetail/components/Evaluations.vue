@@ -64,6 +64,18 @@
         <Form.Item v-if="isPointPillarsModel" label="PointPillars Weight Path" required>
           <Input v-model:value="evaluateForm.checkpointPath" placeholder="Directory: latest 15; .tckpt file: single weight" />
         </Form.Item>
+        <Form.Item v-if="isPointPillarsModel" label="Best Epoch Classes">
+          <Select
+            v-model:value="evaluateForm.checkpointSelectionClasses"
+            mode="multiple"
+            allow-clear
+            placeholder="Empty: select by overall mAP"
+          >
+            <Select.Option v-for="item in checkpointClassOptions" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </Select.Option>
+          </Select>
+        </Form.Item>
         <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
     </Modal>
@@ -155,7 +167,21 @@
     checkpointPath: '/data/pp_data/path/2026_mini3_v2/model_dir',
     sourcePointDim: 6,
     modelInputDim: 4,
+    checkpointSelectionClasses: [] as string[],
   };
+  const checkpointClassOptions = [
+    { label: 'Car', value: 'car' },
+    { label: 'Cone', value: 'cone' },
+    { label: 'Cyclist', value: 'cyclist' },
+    { label: 'Excavator', value: 'excavator_body' },
+    { label: 'Excavator head', value: 'excavator_head' },
+    { label: 'Mining truck', value: 'mining_truck' },
+    { label: 'Pedestrian', value: 'pedestrian' },
+    { label: 'Stone', value: 'stone' },
+    { label: 'Truck', value: 'truck' },
+    { label: 'Unknown', value: 'unknown' },
+    { label: 'Warning signs', value: 'warning_signs' },
+  ];
   const evaluateForm = reactive({
     sourceMode: 'SPLIT',
     datasetIds: [] as number[],
@@ -165,6 +191,7 @@
     modelInputDim: 4 as number | undefined,
     configPath: pointPillarsDefaults.configPath,
     checkpointPath: pointPillarsDefaults.checkpointPath,
+    checkpointSelectionClasses: [] as string[],
   });
 
   const isPointPillarsModel = computed(() => {
@@ -473,6 +500,7 @@
         modelInputDim: isPointPillarsModel.value ? evaluateForm.modelInputDim : undefined,
         configPath: evaluateForm.configPath,
         checkpointPath: evaluateForm.checkpointPath,
+        checkpointSelectionClasses: isPointPillarsModel.value ? evaluateForm.checkpointSelectionClasses : undefined,
         dataFilterParam: {
           dataCountRatio: 100,
           isExcludeModelData: false,
@@ -487,6 +515,7 @@
             checkpointPath: evaluateForm.checkpointPath,
             sourcePointDim: evaluateForm.sourcePointDim,
             modelInputDim: evaluateForm.modelInputDim,
+            checkpointSelectionClasses: evaluateForm.checkpointSelectionClasses,
           }),
         );
       }

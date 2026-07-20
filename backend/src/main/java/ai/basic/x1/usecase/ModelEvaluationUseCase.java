@@ -91,6 +91,7 @@ public class ModelEvaluationUseCase {
                 .dataIds(JSONUtil.parseArray(frameIds))
                 .configPath(configPath)
                 .checkpointPath(checkpointPath)
+                .checkpointSelectionClasses(JSONUtil.parseArray(createBO.getCheckpointSelectionClasses() == null ? List.of() : createBO.getCheckpointSelectionClasses()))
                 .sourcePointDim(createBO.getSourcePointDim())
                 .modelInputDim(createBO.getModelInputDim())
                 .createdBy(createBO.getCreatedBy())
@@ -246,6 +247,7 @@ public class ModelEvaluationUseCase {
         request.set("dataIds", frameIds);
         request.set("configPath", record.getConfigPath());
         request.set("checkpointPath", record.getCheckpointPath());
+        request.set("checkpointSelectionClasses", record.getCheckpointSelectionClasses());
         request.set("metrics", metrics);
         request.set("sourcePointDim", record.getSourcePointDim());
         request.set("modelInputDim", record.getModelInputDim());
