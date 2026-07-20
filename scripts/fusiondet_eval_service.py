@@ -488,6 +488,50 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
         raise RuntimeError(f"Build SANet info did not create {pkl_path}")
     return pkl_path, ordered_data_ids, miou_count
 
+def build_pointpillars_eval_pkl(evaluation_id: int, data_ids: list[int]) -> tuple[Path, list[int], int]:
+    frames = fetch_platform_frames(data_ids)
+    gt_map = fetch_gt_objects(data_ids)
+    all_file_ids = [
+        file_id
+        for data_id in data_ids
+        for file_id in collect_content_file_ids((frames.get(int(data_id)) or {}).get("content") or [])
+    ]
+    files = fetch_file_paths(sorted(set(all_file_ids)))
+    infos = []
+    ordered_data_ids = []
+    for data_id in data_ids:
+        frame = frames.get(int(data_id))
+        if not frame:
+            continue
+        source = frame_source_files(frame, files)
+        lidar_path = resolve_external_path(source["lidar"])
+        if not lidar_path.is_file():
+            raise FileNotFoundError(f"Point cloud file not found for platform dataId={data_id}: {lidar_path}")
+        boxes, names, point_counts = [], [], []
+        for obj in gt_map.get(int(data_id), []):
+            box, name, points = object_to_box(obj)
+            boxes.append(box)
+            names.append(name)
+            point_counts.append(max(points, 1))
+        infos.append({
+            "token": str(data_id),
+            "platform_data_id": int(data_id),
+            "lidar_path": str(lidar_path),
+            "gt_boxes": boxes,
+            "gt_names": names,
+            "num_lidar_pts": point_counts,
+        })
+        ordered_data_ids.append(int(data_id))
+    if not infos:
+        raise RuntimeError("No valid PointPillars evaluation frames were found")
+    out_dir = WORK_ROOT / f"eval_{evaluation_id}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pkl_path = out_dir / "pointpillars_fusion_infos.pkl"
+    with pkl_path.open("wb") as output:
+        pickle.dump({"infos": infos}, output, protocol=pickle.HIGHEST_PROTOCOL)
+    return pkl_path, ordered_data_ids, 0
+
+
 def load_outputs(path: Path) -> Any:
     try:
         import mmcv
@@ -985,7 +1029,7 @@ def run_pointpillars_eval(payload: dict[str, Any]) -> dict[str, Any]:
     selection_classes = list(dict.fromkeys(
         str(name).strip() for name in payload.get("checkpointSelectionClasses") or [] if str(name).strip()
     ))
-    fusion_infos_path, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, ["mAP"])
+    fusion_infos_path, ordered_data_ids, miou_count = build_pointpillars_eval_pkl(evaluation_id, data_ids)
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
     class_map = get_pointpillars_class_map()
     eval_config, _, _, point_cloud_range = build_pointpillars_eval_assets(
