@@ -303,11 +303,18 @@ def scene_name(split_type: str, scene_index: int) -> str:
     return f"{prefixes.get(split_type, 'clip')}_{scene_index:06d}"
 
 
-def write_scene(output, dataset_var: str, scene_var: str, scene: str, args: argparse.Namespace) -> None:
+def write_scene(
+    output,
+    dataset_var: str,
+    scene_var: str,
+    scene: str,
+    split_type: str,
+    args: argparse.Namespace,
+) -> None:
     output.write(
         "INSERT INTO `data` (`dataset_id`,`name`,`order_name`,`content`,`type`,`parent_id`,`status`,`annotation_status`,`split_type`,`is_deleted`,`del_unique_key`,`created_at`,`created_by`,`updated_at`,`updated_by`) "
-        f"VALUES ({dataset_var},{sql_str(scene)},{sql_str(scene)},JSON_ARRAY(),'SCENE',0,'VALID','ANNOTATED','NOT_SPLIT',b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
-        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`order_name`=VALUES(`order_name`),`annotation_status`=VALUES(`annotation_status`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
+        f"VALUES ({dataset_var},{sql_str(scene)},{sql_str(scene)},JSON_ARRAY(),'SCENE',0,'VALID','ANNOTATED',{sql_str(split_type)},b'0',0,NOW(),{args.user_id},NOW(),{args.user_id}) "
+        "ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),`order_name`=VALUES(`order_name`),`annotation_status`=VALUES(`annotation_status`),`split_type`=VALUES(`split_type`),updated_at=NOW(),updated_by=VALUES(updated_by);\n"
     )
     output.write(f"SET {scene_var}=LAST_INSERT_ID();\n\n")
 
@@ -345,7 +352,7 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
             current_scene_key = scene_key
             scene_counter += 1
             scene_var = f"@scene_{dataset_index}_{scene_counter}"
-            write_scene(output, dataset_var, scene_var, scene_name(split_type, clip_index), args)
+            write_scene(output, dataset_var, scene_var, scene_name(split_type, clip_index), split_type, args)
         frame_count += 1
         file_index += 1
         file_var = f"@file_{dataset_index}_{file_index}"
