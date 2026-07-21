@@ -113,6 +113,7 @@ export default class Editor extends BaseEditor {
     }
 
     getClassType(name: string | IUserData): IClassType | undefined {
+        if (!name) return undefined;
         const direct = super.getClassType(name);
         if (direct) return direct;
 
