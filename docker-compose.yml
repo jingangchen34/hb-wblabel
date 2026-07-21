@@ -1,6 +1,11 @@
 services:
   nginx:
-    image: nginx:1.22
+    build:
+      context: ./deploy/nginx
+      args:
+        EXTERNAL_DATA_UID: ${EXTERNAL_DATA_UID:-1000}
+        EXTERNAL_DATA_GID: ${EXTERNAL_DATA_GID:-1000}
+    image: hb-wblabel-nginx
     ports:
       - 8190:80
     volumes:

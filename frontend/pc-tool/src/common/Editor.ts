@@ -1,7 +1,7 @@
 import { Editor as BaseEditor, IFrame, SourceType, Event } from 'pc-editor';
 import { IBSState } from '../type';
 import { getDefault } from '../state';
-import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
+import { utils, AttrType, IClassificationAttr, IClassType, IUserData } from 'pc-editor';
 import * as api from '../api';
 import { EVALUATION_GT_SOURCE_ID, EVALUATION_PRED_SOURCE_ID } from '../api/common';
 import BusinessManager from './BusinessManager';
@@ -19,9 +19,19 @@ function isEvaluationPrediction(object: any) {
 }
 
 function evaluationClassKey(object: any) {
-    return String(
-        object?.classId || object?.classType || object?.modelClass || object?.meta?.classType || '',
+    const key = String(
+        object?.classType || object?.modelClass || object?.meta?.classType || object?.classId || '',
     ).toLowerCase();
+    const aliases: Record<string, string> = {
+        minetruck: 'mining_truck',
+        vehicle2: 'excavator_body',
+        excavator: 'excavator_body',
+        vehicle2_head: 'excavator_head',
+        vehicle: 'truck',
+        vehicle1: 'truck',
+        tram: 'truck',
+    };
+    return aliases[key] || key;
 }
 
 function evaluationCenterDistance(left: any, right: any) {
@@ -100,6 +110,27 @@ export default class Editor extends BaseEditor {
         this.businessManager = new BusinessManager(this);
         this.dataManager = new DataManager(this);
         this.multiFrameMergeManager = new MultiFrameMergeManager(this);
+    }
+
+    getClassType(name: string | IUserData): IClassType | undefined {
+        const direct = super.getClassType(name);
+        if (direct) return direct;
+
+        const rawKey = typeof name === 'string' ? name : name.classId || name.classType || '';
+        const lowerKey = String(rawKey).toLowerCase();
+        const exact = this.state.classTypes.find((item) => item.name.toLowerCase() === lowerKey);
+        if (exact) return exact;
+
+        const candidates: Record<string, string[]> = {
+            mining_truck: ['MineTruck'],
+            excavator_body: ['Excavator', 'Vehicle2'],
+            excavator_head: ['Excavator_head', 'Vehicle2_head'],
+            pedestrian: ['Pedestrian'],
+            truck: ['Truck', 'Vehicle', 'Vehicle1', 'Tram'],
+            car: ['Car'],
+        };
+        const candidateNames = candidates[evaluationClassKey({ classType: rawKey })] || [];
+        return this.state.classTypes.find((item) => candidateNames.includes(item.name));
     }
 
     async loadFrame(index: number, showLoading: boolean = true, force: boolean = false) {

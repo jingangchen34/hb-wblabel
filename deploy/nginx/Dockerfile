@@ -1,0 +1,6 @@
+FROM nginx:1.22
+
+ARG EXTERNAL_DATA_UID=1000
+ARG EXTERNAL_DATA_GID=1000
+
+RUN groupmod --gid "${EXTERNAL_DATA_GID}" nginx && usermod --uid "${EXTERNAL_DATA_UID}" --gid "${EXTERNAL_DATA_GID}" nginx
