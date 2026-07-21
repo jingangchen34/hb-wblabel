@@ -12,7 +12,6 @@ import ai.basic.x1.adapter.port.dao.mybatis.model.Model;
 import ai.basic.x1.adapter.port.dao.mybatis.extension.ExtendLambdaQueryWrapper;
 import ai.basic.x1.entity.ModelEvaluationCreateBO;
 import ai.basic.x1.entity.ModelRunFilterDataBO;
-import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import ai.basic.x1.entity.enums.ItemTypeEnum;
 import ai.basic.x1.entity.enums.RunStatusEnum;
 import ai.basic.x1.usecase.exception.UsecaseCode;
@@ -125,8 +124,7 @@ public class ModelEvaluationUseCase {
         }
         var gtWrapper = Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .eq(DataAnnotationObject::getDataId, dataId)
-                .eq(DataAnnotationObject::getSourceId, -1L)
-                .eq(DataAnnotationObject::getSourceType, DataAnnotationObjectSourceTypeEnum.DATA_FLOW);
+                .eq(DataAnnotationObject::getSourceId, -1L);
         var groundTruths = dataAnnotationObjectDAO.list(gtWrapper).stream()
                 .map(DataAnnotationObject::getClassAttributes)
                 .peek(obj -> {

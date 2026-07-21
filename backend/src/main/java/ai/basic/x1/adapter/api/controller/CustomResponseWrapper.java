@@ -3,6 +3,7 @@ package ai.basic.x1.adapter.api.controller;
 import ai.basic.x1.adapter.dto.ApiResult;
 import cn.hutool.json.JSONUtil;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.server.ServerHttpRequest;
@@ -25,7 +26,7 @@ public class CustomResponseWrapper implements ResponseBodyAdvice<Object> {
     public Object beforeBodyWrite(Object body, MethodParameter returnType, MediaType selectedContentType,
                                   Class<? extends HttpMessageConverter<?>> selectedConverterType,
                                   ServerHttpRequest request, ServerHttpResponse response) {
-        if (body instanceof ApiResult) {
+        if (body instanceof ApiResult || body instanceof Resource || body instanceof byte[]) {
             return body;
         }
         if (body instanceof String) {

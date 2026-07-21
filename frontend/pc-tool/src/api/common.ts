@@ -61,18 +61,18 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
             sourceId,
             sourceType,
             color: source === 'GT' ? '#22c55e' : '#ef4444',
-            classType: raw.classType || raw.modelClass || raw.label || raw.meta?.classType,
-            modelClass: raw.modelClass || raw.label || raw.classType || raw.meta?.classType,
+            classType: raw.classType || raw.className || raw.modelClass || raw.label || raw.meta?.classType,
+            modelClass: raw.modelClass || raw.className || raw.label || raw.classType || raw.meta?.classType,
             modelConfidence: raw.modelConfidence ?? raw.confidence,
             trackId: raw.trackId || raw.trackID || `${source}-${index}`,
             trackID: raw.trackID || raw.trackId || `${source}-${index}`,
             trackName: raw.trackName || raw.displayText || (source === 'PRED' && (raw.modelConfidence ?? raw.confidence) !== undefined
-                ? `${raw.modelClass || raw.label || raw.classType || raw.meta?.classType || 'unknown'} ${Number(raw.modelConfidence ?? raw.confidence).toFixed(2)}`
+                ? `${raw.modelClass || raw.className || raw.label || raw.classType || raw.meta?.classType || 'unknown'} ${Number(raw.modelConfidence ?? raw.confidence).toFixed(2)}`
                 : undefined),
         };
     }
     const box = raw.box || raw;
-    const label = raw.modelClass || raw.label || raw.classType || raw.meta?.classType || 'unknown';
+    const label = raw.modelClass || raw.className || raw.label || raw.classType || raw.meta?.classType || 'unknown';
     const confidence = raw.modelConfidence ?? raw.confidence;
     const dz = Number(box.dz ?? box.zSize ?? 0);
     return {
