@@ -237,7 +237,7 @@
                 color: #bec1ca;
                 padding-right: 12px;
                 border-right: 1px solid #57575c;
-                max-width: 220px;
+                max-width: 320px;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;

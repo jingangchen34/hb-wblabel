@@ -33,6 +33,8 @@ export default function useHeader() {
         dataName: '',
         frameName: '',
     });
+    const evaluationSceneCache = new Map<string, Promise<{ name: string; frames: IFrame[] }>>();
+    let nameUpdateVersion = 0;
     watch(
         () => state.frameIndex,
         () => {
@@ -77,11 +79,45 @@ export default function useHeader() {
         }, 400);
     }
 
-    let updateName = () => {
+    let updateName = async () => {
+        const version = ++nameUpdateVersion;
         const frame = currentFrame.value;
         if (!frame) return;
         const resourceName = editor.dataResource.dataMap[frame.id]?.name || '';
         iState.frameName = resourceName || frame.name || frame.orderName || '';
+
+        const query = bsState.query || {};
+        if (query.evaluationDataIds || query.evaluationFrameSetKey) {
+            try {
+                const frameInfo = await api.getDataInfo(frame.id);
+                const frameName = frameInfo?.name || iState.frameName;
+                const sceneId = frameInfo?.parentId ? String(frameInfo.parentId) : '';
+                if (!sceneId) {
+                    if (version === nameUpdateVersion) iState.dataName = frameName;
+                    return;
+                }
+
+                if (!evaluationSceneCache.has(sceneId)) {
+                    evaluationSceneCache.set(
+                        sceneId,
+                        Promise.all([
+                            api.getDataName(sceneId),
+                            api.getFrameSeriesData(String(frame.datasetId || query.datasetId), sceneId),
+                        ]).then(([name, frames]) => ({ name, frames })),
+                    );
+                }
+                const scene = await evaluationSceneCache.get(sceneId)!;
+                if (version !== nameUpdateVersion) return;
+                const originalIndex = scene.frames.findIndex((item) => item.id === String(frame.id));
+                const position = originalIndex >= 0 ? `（${originalIndex + 1}/${scene.frames.length}）` : '';
+                iState.frameName = frameName;
+                iState.dataName = [scene.name, frameName].filter(Boolean).join(' / ') + position;
+                return;
+            } catch (_) {
+                if (version !== nameUpdateVersion) return;
+            }
+        }
+
         iState.dataName = bsState.seriesFrameName
             ? [bsState.seriesFrameName, iState.frameName].filter(Boolean).join(' / ')
             : iState.frameName;
