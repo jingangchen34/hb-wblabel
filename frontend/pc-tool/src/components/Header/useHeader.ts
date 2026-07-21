@@ -378,12 +378,13 @@ export default function useHeader() {
             datasetId: bsState.datasetId,
         };
 
-        if (editor.state.isSeriesFrame) {
-            let seriesFrameId = bsState.seriesFrameId ?? '';
-            if (bsState.query.evaluationDataIds || bsState.query.evaluationFrameSetKey) {
-                const dataInfo = await api.getDataInfo(frame.id);
-                seriesFrameId = dataInfo?.parentId ? String(dataInfo.parentId) : frame.id;
-            }
+        const isEvaluationAnomalySet =
+            !!bsState.query.evaluationDataIds || !!bsState.query.evaluationFrameSetKey;
+        if (isEvaluationAnomalySet) {
+            config.dataIds = editor.state.frames.map((item) => item.id);
+            config.operateItemType = 'SINGLE_DATA';
+        } else if (editor.state.isSeriesFrame) {
+            const seriesFrameId = bsState.seriesFrameId ?? '';
             config.dataIds = [seriesFrameId];
             config.operateItemType = 'SCENE';
         }
