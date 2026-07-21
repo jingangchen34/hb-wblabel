@@ -48,14 +48,15 @@ export function view(): IPageHandler {
         const { query } = editor.bsState;
 
         const dataId = query.dataId;
-        if (query.evaluationDataIds) {
-            const requestedIds = String(query.evaluationDataIds).split(',').filter(Boolean);
-            const frames = await api.getEvaluationFrameInfos(requestedIds);
+        if (query.evaluationDataIds || query.evaluationFrameSetKey) {
+            const requestedIds = resolveEvaluationDataIds(query);
+            const frames = await api.getEvaluationFrameInfos(requestedIds, String(query.datasetId));
             if (!frames.length) throw new BSError('', 'load evaluation frames error');
             editor.state.isSeriesFrame = true;
             editor.bsState.seriesFrameId = String((frames[0] as any).parentId || '');
             editor.bsState.seriesFrameName = 'Evaluation anomalies (' + frames.length + ')';
             editor.setFrames(frames);
+            editor.dataResource.setLoadMode('current');
             return;
         }
         if (['frame', 'scene'].some((e) => new RegExp(e, 'i').test(query.dataType))) {
@@ -81,6 +82,19 @@ export function view(): IPageHandler {
         }
     }
 
+    function resolveEvaluationDataIds(query: Record<string, string>) {
+        if (query.evaluationDataIds) {
+            return String(query.evaluationDataIds).split(',').filter(Boolean);
+        }
+        const key = String(query.evaluationFrameSetKey || '');
+        if (!key.startsWith('evaluation-frame-set:')) return [];
+        try {
+            const value = JSON.parse(window.localStorage.getItem(key) || '[]');
+            return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+        } catch (_) {
+            return [];
+        }
+    }
     function createSingleData() {
         let { query } = editor.bsState;
 

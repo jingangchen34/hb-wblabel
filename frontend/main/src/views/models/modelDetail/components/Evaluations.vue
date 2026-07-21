@@ -284,6 +284,8 @@
   const openEvaluationFrames = (dataIds: Array<number | string>) => {
     const record = selectedMetricsRecord.value;
     if (!record || !dataIds?.length) return;
+    const frameSetKey = `evaluation-frame-set:${record.id}:${Date.now()}`;
+    window.localStorage.setItem(frameSetKey, JSON.stringify(dataIds.map(String)));
     goToTool({
       datasetId: record.datasetId,
       dataId: dataIds[0],
@@ -291,7 +293,7 @@
       type: 'readOnly',
       evaluationId: record.id,
       showEvaluation: 1,
-      evaluationDataIds: dataIds.join(','),
+      evaluationFrameSetKey: frameSetKey,
     }, props.datasetType);
   };
 

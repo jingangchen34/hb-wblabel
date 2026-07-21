@@ -142,16 +142,16 @@ export default class Editor extends BaseEditor {
 
     private async ensureEvaluationFrameObjects() {
         if (!this.bsState.query.showEvaluation || !this.state.isSeriesFrame) return;
-        const missingFrameIds = this.state.frames
-            .filter((frame) => !this.dataManager.getFrameObject(frame.id))
-            .map((frame) => frame.id);
+        const currentFrame = this.getCurrentFrame();
+        const missingFrameIds = currentFrame && !this.dataManager.getFrameObject(currentFrame.id)
+            ? [currentFrame.id]
+            : [];
         if (missingFrameIds.length === 0) return;
 
         if (!this.evaluationFrameObjectsLoading) {
             this.evaluationFrameObjectsLoading = this.dataManager
                 .loadMissingFrameObjects(missingFrameIds)
                 .then(() => {
-                    this.loadManager.updateTrackMap(this.state.frames);
                     if (this.currentTrack) {
                         this.dispatchEvent({
                             type: Event.CURRENT_TRACK_CHANGE,

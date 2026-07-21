@@ -344,7 +344,7 @@ export default function useHeader() {
 
         if (editor.state.isSeriesFrame) {
             let seriesFrameId = bsState.seriesFrameId ?? '';
-            if (bsState.query.evaluationDataIds) {
+            if (bsState.query.evaluationDataIds || bsState.query.evaluationFrameSetKey) {
                 const dataInfo = await api.getDataInfo(frame.id);
                 seriesFrameId = dataInfo?.parentId ? String(dataInfo.parentId) : frame.id;
             }
