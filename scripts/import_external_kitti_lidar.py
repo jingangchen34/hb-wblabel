@@ -303,6 +303,11 @@ def scene_name(split_type: str, scene_index: int) -> str:
     return f"{prefixes.get(split_type, 'clip')}_{scene_index:06d}"
 
 
+def selected_pkl_split_types(split: str) -> list[str]:
+    mapping = {"train": ["TRAINING"], "val": ["VALIDATION"], "all": ["TRAINING", "VALIDATION"]}
+    return mapping[split]
+
+
 def write_scene(
     output,
     dataset_var: str,
@@ -333,6 +338,15 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
         output.write(f"DELETE dao FROM `data_annotation_object` dao INNER JOIN `data` d ON dao.data_id=d.id WHERE d.dataset_id={dataset_var};\n")
         output.write(f"DELETE FROM `dataset_class` WHERE dataset_id={dataset_var};\n")
         output.write(f"DELETE FROM `data` WHERE dataset_id={dataset_var};\n\n")
+    elif args.replace_split:
+        split_types = selected_pkl_split_types(args.pkl_split)
+        split_sql = ",".join(sql_str(value) for value in split_types)
+        output.write(
+            "DELETE dao FROM `data_annotation_object` dao "
+            "INNER JOIN `data` d ON dao.data_id=d.id "
+            f"WHERE d.dataset_id={dataset_var} AND d.type='SINGLE_DATA' "
+            f"AND d.split_type IN ({split_sql});\n\n"
+        )
 
     class_vars: dict[str, str] = {}
     file_index = 0
@@ -396,9 +410,18 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="Optional per-dataset frame limit for validation")
     parser.add_argument("--clip-size", type=int, default=30, help="Frames per generated scene/clip")
     parser.add_argument("--replace", action="store_true", help="Delete existing data and classes in the target dataset before import")
+    parser.add_argument(
+        "--replace-split",
+        action="store_true",
+        help="Delete existing object annotations only for the selected PKL split before re-importing it",
+    )
     parser.add_argument("--source", choices=("pkl", "labels"), default="pkl", help="Read KITTI infos pkl or raw label_2/calib files")
     parser.add_argument("--pkl-split", choices=("train", "val", "all"), default="train", help="KITTI infos split to import in pkl mode")
     args = parser.parse_args()
+    if args.replace and args.replace_split:
+        parser.error("--replace and --replace-split are mutually exclusive")
+    if args.replace_split and args.source != "pkl":
+        parser.error("--replace-split requires --source pkl")
     root = Path(args.root).resolve()
     scan_root = Path(args.scan_root).resolve() if args.scan_root else root / "pp_data"
     selected = args.datasets or [path.name for path in sorted(scan_root.iterdir()) if path.is_dir()]
