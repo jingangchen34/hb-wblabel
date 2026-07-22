@@ -89,15 +89,33 @@
           <Select v-model:value="selectedSafetyClass" class="safety-metrics__select">
             <Select.Option v-for="group in safetyGroups" :key="group.className" :value="group.className">{{ group.className }}</Select.Option>
           </Select>
+          <div class="safety-metrics__manual">
+            <span>Manual confidence</span>
+            <InputNumber v-model:value="manualConfidence" :min="0" :max="1" :step="0.01" :precision="4" />
+            <Button type="primary" @click="calculateManualMetrics">Calculate</Button>
+            <span v-if="manualMetrics" class="safety-metrics__manual-note">
+              Confidence: {{ formatThreshold(manualMetrics.requestedThreshold) }};
+              TP / FP / FN: {{ formatCounts(manualMetrics) }};
+              Precision / Recall: {{ formatPrecisionRecall(manualMetrics) }};
+              False detection: {{ formatOptionalRate(manualMetrics.falseDetectionRate) }};
+              Miss: {{ formatOptionalRate(manualMetrics.missRate) }}
+            </span>
+          </div>
           <div v-if="prPolyline" class="pr-chart">
             <svg viewBox="0 0 760 330" role="img" :aria-label="`${selectedSafetyClass} PR curve`">
               <rect x="55" y="20" width="680" height="250" fill="#fafafa" />
-              <rect v-for="band in prBands" :key="band.label" x="55" :y="band.y" width="680" :height="band.height" :fill="band.color"><title>{{ band.label }}</title></rect>
+              <rect v-for="band in prBands" :key="band.label" x="55" :y="band.y" width="680" :height="band.height" :fill="band.color" />
               <line x1="55" y1="270" x2="735" y2="270" stroke="#64748b" />
               <line x1="55" y1="20" x2="55" y2="270" stroke="#64748b" />
               <polyline :points="prPolyline" fill="none" stroke="#2563eb" stroke-width="2" />
-              <g v-for="marker in prMarkers" :key="marker.label">
-                <circle :cx="marker.x" :cy="marker.y" r="5" :fill="marker.color" stroke="#fff" stroke-width="1.5"><title>{{ marker.label }}: threshold {{ formatThreshold(marker.threshold) }}, recall {{ formatRate(marker.recall) }}, precision {{ formatRate(marker.precision) }}</title></circle>
+              <g v-for="marker in prMarkers" :key="marker.label" @mouseenter="hoveredMarker = marker" @mouseleave="hoveredMarker = null">
+                <circle :cx="marker.x" :cy="marker.y" r="8" fill="transparent" />
+                <circle :cx="marker.x" :cy="marker.y" r="5" :fill="marker.color" stroke="#fff" stroke-width="1.5" />
+                <g v-if="hoveredMarker?.label === marker.label" class="pr-tooltip" pointer-events="none">
+                  <rect :x="tooltipX(marker.x)" :y="tooltipY(marker.y)" width="260" height="48" rx="3" />
+                  <text :x="tooltipX(marker.x) + 8" :y="tooltipY(marker.y) + 19">FP band: {{ marker.label }}</text>
+                  <text :x="tooltipX(marker.x) + 8" :y="tooltipY(marker.y) + 36">Confidence: {{ formatThreshold(marker.threshold) }} · P/R: {{ formatRate(marker.precision) }} / {{ formatRate(marker.recall) }}</text>
+                </g>
               </g>
               <text x="395" y="310" text-anchor="middle">Recall</text>
               <text x="18" y="145" text-anchor="middle" transform="rotate(-90 18 145)">Precision (90%-100%)</text>
@@ -157,6 +175,9 @@
   const metricsVisible = ref(false);
   const selectedMetricsRecord = ref<any>(null);
   const selectedSafetyClass = ref('');
+  const manualConfidence = ref<number | undefined>(0.5);
+  const manualMetrics = ref<any>(null);
+  const hoveredMarker = ref<any>(null);
   const pageNo = ref(1);
   const pageSize = ref(10);
   const total = ref(0);
@@ -254,6 +275,46 @@
       ? '-'
       : `${formatRate(1 - row.falseDetectionRate)} / ${formatRate(1 - row.missRate)}`;
 
+  const tooltipX = (x: number) => Math.max(58, Math.min(472, Number(x) - 130));
+  const tooltipY = (y: number) => (Number(y) < 75 ? Number(y) + 12 : Number(y) - 58);
+
+  const calculateManualMetrics = () => {
+    const threshold = Number(manualConfidence.value);
+    const group = selectedSafetyGroup.value;
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+      createMessage.warning('Confidence must be between 0 and 1.');
+      return;
+    }
+    const allStats = group?.thresholdStats || [];
+    if (!allStats.length) {
+      createMessage.warning('Threshold statistics are unavailable for this evaluation.');
+      manualMetrics.value = null;
+      return;
+    }
+    const stats = [...allStats]
+      .filter((item: any) => Number(item.threshold) >= threshold)
+      .sort((left: any, right: any) => Number(left.threshold) - Number(right.threshold));
+    const matched = stats[0];
+    if (matched) {
+      manualMetrics.value = { className: group.className, requestedThreshold: threshold, ...matched };
+      return;
+    }
+    const totalGt = Math.max(
+      0,
+      ...allStats.map((item: any) => Number(item.TP || 0) + Number(item.FN || 0)),
+    );
+    manualMetrics.value = {
+      className: group?.className,
+      requestedThreshold: threshold,
+      threshold,
+      TP: 0,
+      FP: 0,
+      FN: totalGt,
+      falseDetectionRate: 0,
+      missRate: totalGt ? 1 : 0,
+    };
+  };
+
   const prBands = [
     { label: '(0%, 3%]', y: 20, height: 75, color: '#dcfce7' },
     { label: '(3%, 5%]', y: 95, height: 50, color: '#ecfccb' },
@@ -320,6 +381,8 @@
   };
 
   watch(selectedSafetyClass, (className) => {
+    manualMetrics.value = null;
+    hoveredMarker.value = null;
     if (className && selectedMetricsRecord.value?.id) {
       window.sessionStorage.setItem(`evaluation-safety-class:${selectedMetricsRecord.value.id}`, className);
     }
@@ -595,6 +658,17 @@
       width: 220px;
       margin-bottom: 12px;
     }
+    &__manual {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 12px;
+    }
+
+    &__manual-note {
+      color: #334155;
+    }
 
     &__actions {
       display: flex;
@@ -632,6 +706,15 @@
       display: block;
       width: 100%;
       height: auto;
+    }
+    .pr-tooltip rect {
+      fill: rgba(15, 23, 42, 0.94);
+      stroke: #475569;
+    }
+
+    .pr-tooltip text {
+      fill: #fff;
+      font-size: 11px;
     }
   }
 

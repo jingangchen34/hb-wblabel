@@ -355,6 +355,17 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
             snapshot(1.0)
 
         unique_scans = {item["threshold"]: item for item in scans}
+        threshold_stats = [
+            {
+                "threshold": item["threshold"],
+                "TP": item["TP"],
+                "FP": item["FP"],
+                "FN": item["FN"],
+                "falseDetectionRate": item["falseDetectionRate"],
+                "missRate": item["missRate"],
+            }
+            for item in sorted(unique_scans.values(), key=lambda value: value["threshold"], reverse=True)
+        ]
         curve = []
         for item in unique_scans.values():
             curve.append({
@@ -391,7 +402,12 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
             recommendation["falseDetectionRateMin"] = rate_min
             recommendation["falseDetectionRateMax"] = rate_max
             recommendations.append(recommendation)
-        results.append({"className": class_name, "curve": curve, "recommendations": recommendations})
+        results.append({
+            "className": class_name,
+            "curve": curve,
+            "thresholdStats": threshold_stats,
+            "recommendations": recommendations,
+        })
     return results
 
 
