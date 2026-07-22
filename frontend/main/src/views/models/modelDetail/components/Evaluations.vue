@@ -92,14 +92,7 @@
           <div class="safety-metrics__manual">
             <span>Manual confidence</span>
             <InputNumber v-model:value="manualConfidence" :min="0" :max="1" :step="0.01" :precision="4" />
-            <Button type="primary" @click="calculateManualMetrics">Calculate</Button>
-            <span v-if="manualMetrics" class="safety-metrics__manual-note">
-              Confidence: {{ formatThreshold(manualMetrics.requestedThreshold) }};
-              TP / FP / FN: {{ formatCounts(manualMetrics) }};
-              Precision / Recall: {{ formatPrecisionRecall(manualMetrics) }};
-              False detection: {{ formatOptionalRate(manualMetrics.falseDetectionRate) }};
-              Miss: {{ formatOptionalRate(manualMetrics.missRate) }}
-            </span>
+            <Button type="primary" @click="calculateManualMetrics">Evaluate</Button>
           </div>
           <div v-if="prPolyline" class="pr-chart">
             <svg viewBox="0 0 760 330" role="img" :aria-label="`${selectedSafetyClass} PR curve`">
@@ -107,15 +100,16 @@
               <rect v-for="band in prBands" :key="band.label" x="55" :y="band.y" width="680" :height="band.height" :fill="band.color" />
               <line x1="55" y1="270" x2="735" y2="270" stroke="#64748b" />
               <line x1="55" y1="20" x2="55" y2="270" stroke="#64748b" />
-              <polyline :points="prPolyline" fill="none" stroke="#2563eb" stroke-width="2" />
-              <g v-for="marker in prMarkers" :key="marker.label" @mouseenter="hoveredMarker = marker" @mouseleave="hoveredMarker = null">
-                <circle :cx="marker.x" :cy="marker.y" r="8" fill="transparent" />
+              <polyline :points="prPolyline" fill="none" stroke="#2563eb" stroke-width="2" pointer-events="none" />
+              <g v-for="marker in prMarkers" :key="marker.label">
                 <circle :cx="marker.x" :cy="marker.y" r="5" :fill="marker.color" stroke="#fff" stroke-width="1.5" />
-                <g v-if="hoveredMarker?.label === marker.label" class="pr-tooltip" pointer-events="none">
-                  <rect :x="tooltipX(marker.x)" :y="tooltipY(marker.y)" width="260" height="48" rx="3" />
-                  <text :x="tooltipX(marker.x) + 8" :y="tooltipY(marker.y) + 19">FP band: {{ marker.label }}</text>
-                  <text :x="tooltipX(marker.x) + 8" :y="tooltipY(marker.y) + 36">Confidence: {{ formatThreshold(marker.threshold) }} · P/R: {{ formatRate(marker.precision) }} / {{ formatRate(marker.recall) }}</text>
-                </g>
+              </g>
+              <rect x="55" y="20" width="680" height="250" fill="transparent" class="pr-chart__hit-area"
+                @mousemove="handleCurveHover" @mouseleave="hoveredCurvePoint = null" @click="selectCurvePoint" />
+              <g v-if="hoveredCurvePoint" class="pr-tooltip" pointer-events="none">
+                <circle :cx="hoveredCurvePoint.x" :cy="hoveredCurvePoint.y" r="5" fill="#0f172a" stroke="#fff" stroke-width="1.5" />
+                <rect :x="tooltipX(hoveredCurvePoint.x)" :y="tooltipY(hoveredCurvePoint.y)" width="150" height="30" rx="3" />
+                <text :x="tooltipX(hoveredCurvePoint.x) + 8" :y="tooltipY(hoveredCurvePoint.y) + 20">Confidence: {{ formatThreshold(hoveredCurvePoint.threshold) }}</text>
               </g>
               <text x="395" y="310" text-anchor="middle">Recall</text>
               <text x="18" y="145" text-anchor="middle" transform="rotate(-90 18 145)">Precision (90%-100%)</text>
@@ -126,9 +120,9 @@
           <table>
             <thead><tr><th>Class</th><th>FP band</th><th>Confidence</th><th>TP / FP / FN</th><th>Precision / Recall</th><th>False detection</th><th>Miss</th><th>Frames</th></tr></thead>
             <tbody>
-              <tr v-for="row in safetyRows" :key="`${row.className}-${row.falseDetectionRateMin}-${row.falseDetectionRateMax}`">
+              <tr v-for="row in safetyRows" :key="rowKey(row)" :class="{ 'safety-metrics__manual-row': row.isManual }">
                 <td>{{ row.className }}</td>
-                <td>{{ formatBand(row) }}</td>
+                <td>{{ row.isManual ? 'Manual' : formatBand(row) }}</td>
                 <td>{{ formatThreshold(row.threshold) }}</td>
                 <td>{{ formatCounts(row) }}</td>
                 <td>{{ formatPrecisionRecall(row) }}</td>
@@ -177,7 +171,7 @@
   const selectedSafetyClass = ref('');
   const manualConfidence = ref<number | undefined>(0.5);
   const manualMetrics = ref<any>(null);
-  const hoveredMarker = ref<any>(null);
+  const hoveredCurvePoint = ref<any>(null);
   const pageNo = ref(1);
   const pageSize = ref(10);
   const total = ref(0);
@@ -255,7 +249,8 @@
   );
   const safetyRows = computed(() => {
     const group = selectedSafetyGroup.value;
-    return (group?.recommendations || []).map((item: any) => ({ className: group.className, ...item }));
+    const rows = (group?.recommendations || []).map((item: any) => ({ className: group.className, ...item }));
+    return manualMetrics.value ? [manualMetrics.value, ...rows] : rows;
   });
 
   const formatRate = (value: number) => `${(Number(value || 0) * 100).toFixed(2)}%`;
@@ -268,6 +263,7 @@
     const max = Number(row.falseDetectionRateMax || 0);
     return min === 0 && max === 0 ? '0%' : `(${formatRate(min)}, ${formatRate(max)}]`;
   };
+  const rowKey = (row: any) => row.isManual ? [row.className, 'manual', row.requestedThreshold].join('-') : [row.className, row.falseDetectionRateMin, row.falseDetectionRateMax].join('-');
   const formatCounts = (row: any) =>
     row.TP === null || row.TP === undefined ? '-' : `${row.TP} / ${row.FP} / ${row.FN}`;
   const formatPrecisionRecall = (row: any) =>
@@ -275,7 +271,7 @@
       ? '-'
       : `${formatRate(1 - row.falseDetectionRate)} / ${formatRate(1 - row.missRate)}`;
 
-  const tooltipX = (x: number) => Math.max(58, Math.min(472, Number(x) - 130));
+  const tooltipX = (x: number) => Math.max(58, Math.min(452, Number(x) - 140));
   const tooltipY = (y: number) => (Number(y) < 75 ? Number(y) + 12 : Number(y) - 58);
 
   const calculateManualMetrics = () => {
@@ -295,8 +291,32 @@
       .filter((item: any) => Number(item.threshold) >= threshold)
       .sort((left: any, right: any) => Number(left.threshold) - Number(right.threshold));
     const matched = stats[0];
+    const events = (group?.thresholdEvents || []).filter((item: any) => Number(item.threshold) >= threshold);
+    const falsePositiveDataIds = Array.from(new Set<any>(
+      events.filter((item: any) => item.outcome === 'FP' && item.dataId !== undefined).map((item: any) => item.dataId),
+    ));
+    const remainingGt = new Map<any, number>();
+    (group?.groundTruthFrameCounts || []).forEach((item: any) => {
+      if (item.dataId !== undefined) remainingGt.set(item.dataId, Number(item.count || 0));
+    });
+    events.filter((item: any) => item.outcome === 'TP').forEach((item: any) => {
+      if (remainingGt.has(item.dataId)) {
+        remainingGt.set(item.dataId, Math.max(0, Number(remainingGt.get(item.dataId)) - 1));
+      }
+    });
+    const missedDataIds = Array.from(remainingGt.entries())
+      .filter(([, count]) => count > 0)
+      .map(([dataId]) => dataId);
     if (matched) {
-      manualMetrics.value = { className: group.className, requestedThreshold: threshold, ...matched };
+      manualMetrics.value = {
+        ...matched,
+        className: group.className,
+        threshold,
+        requestedThreshold: threshold,
+        isManual: true,
+        falsePositiveDataIds,
+        missedDataIds,
+      };
       return;
     }
     const totalGt = Math.max(
@@ -307,11 +327,16 @@
       className: group?.className,
       requestedThreshold: threshold,
       threshold,
+      isManual: true,
       TP: 0,
       FP: 0,
       FN: totalGt,
       falseDetectionRate: 0,
       missRate: totalGt ? 1 : 0,
+      falsePositiveDataIds: [],
+      missedDataIds: (group?.groundTruthFrameCounts || [])
+        .map((item: any) => item.dataId)
+        .filter((dataId: any) => dataId !== undefined),
     };
   };
 
@@ -328,6 +353,32 @@
       .map((point: any) => `${prX(Number(point.recall))},${prY(Number(point.precision))}`)
       .join(' '),
   );
+  const interactiveCurvePoints = computed(() =>
+    (selectedSafetyGroup.value?.thresholdStats || []).map((point: any) => ({
+      ...point,
+      precision: 1 - Number(point.falseDetectionRate || 0),
+      recall: 1 - Number(point.missRate || 0),
+      x: prX(1 - Number(point.missRate || 0)),
+      y: prY(1 - Number(point.falseDetectionRate || 0)),
+    })),
+  );
+  const handleCurveHover = (event: MouseEvent) => {
+    const svg = (event.currentTarget as SVGElement)?.ownerSVGElement;
+    if (!svg || !interactiveCurvePoints.value.length) return;
+    const bounds = svg.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) * 760 / bounds.width;
+    const y = (event.clientY - bounds.top) * 330 / bounds.height;
+    const closest = interactiveCurvePoints.value.reduce((best: any, point: any) => {
+      const distance = Math.hypot(point.x - x, point.y - y);
+      return !best || distance < best.distance ? { ...point, distance } : best;
+    }, null);
+    hoveredCurvePoint.value = closest?.distance <= 18 ? closest : null;
+  };
+  const selectCurvePoint = () => {
+    if (!hoveredCurvePoint.value) return;
+    manualConfidence.value = Number(hoveredCurvePoint.value.threshold);
+  };
+
   const markerColors = ['#166534', '#16a34a', '#65a30d', '#ca8a04', '#ea580c'];
   const prMarkers = computed(() =>
     (selectedSafetyGroup.value?.recommendations || [])
@@ -382,7 +433,7 @@
 
   watch(selectedSafetyClass, (className) => {
     manualMetrics.value = null;
-    hoveredMarker.value = null;
+    hoveredCurvePoint.value = null;
     if (className && selectedMetricsRecord.value?.id) {
       window.sessionStorage.setItem(`evaluation-safety-class:${selectedMetricsRecord.value.id}`, className);
     }
@@ -666,8 +717,8 @@
       margin: 0 0 12px;
     }
 
-    &__manual-note {
-      color: #334155;
+    &__manual-row {
+      background: #eff6ff;
     }
 
     &__actions {
@@ -715,6 +766,10 @@
     .pr-tooltip text {
       fill: #fff;
       font-size: 11px;
+    }
+
+    .pr-chart__hit-area {
+      cursor: crosshair;
     }
   }
 

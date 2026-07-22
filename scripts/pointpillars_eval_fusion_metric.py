@@ -312,6 +312,7 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
         total_gt = sum(len(boxes) for boxes in frame_gt.values())
         tp = fp = 0
         scans = []
+        threshold_events = []
 
         def snapshot(threshold):
             predicted_count = tp + fp
@@ -346,9 +347,16 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
                 if nearest_index is None:
                     fp += 1
                     frame_fp[token] += 1
+                    outcome = "FP"
                 else:
                     tp += 1
                     unmatched_gt[token].remove(nearest_index)
+                    outcome = "TP"
+                threshold_events.append({
+                    "threshold": threshold,
+                    "frameIndex": frame_indices[token],
+                    "outcome": outcome,
+                })
                 index += 1
             snapshot(threshold)
         if not scans:
@@ -406,6 +414,11 @@ def analyze_safety_thresholds(gt_boxes, pred_boxes, class_names, dist_threshold)
             "className": class_name,
             "curve": curve,
             "thresholdStats": threshold_stats,
+            "thresholdEvents": threshold_events,
+            "groundTruthFrameCounts": [
+                {"frameIndex": frame_indices[token], "count": len(frame_gt[token])}
+                for token in sample_tokens if frame_gt[token]
+            ],
             "recommendations": recommendations,
         })
     return results

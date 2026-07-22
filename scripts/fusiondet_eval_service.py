@@ -632,6 +632,14 @@ def attach_safety_data_ids(
         return list(dict.fromkeys(parent_by_data_id.get(data_id) or data_id for data_id in frame_ids))
 
     for class_result in metrics.get("safetyThresholds") or []:
+        for event in class_result.get("thresholdEvents") or []:
+            index = int(event.get("frameIndex", -1))
+            if 0 <= index < len(data_ids):
+                event["dataId"] = data_ids[index]
+        for frame_count in class_result.get("groundTruthFrameCounts") or []:
+            index = int(frame_count.get("frameIndex", -1))
+            if 0 <= index < len(data_ids):
+                frame_count["dataId"] = data_ids[index]
         for recommendation in class_result.get("recommendations") or []:
             recommendation["falsePositiveDataIds"] = [
                 data_ids[int(index)]
