@@ -341,12 +341,38 @@ def write_dataset(output, root: Path, dataset_dir: Path, args: argparse.Namespac
     elif args.replace_split:
         split_types = selected_pkl_split_types(args.pkl_split)
         split_sql = ",".join(sql_str(value) for value in split_types)
+        temp_table = f"tmp_replace_split_data_{dataset_index}"
+        output.write(f"DROP TEMPORARY TABLE IF EXISTS `{temp_table}`;\n")
+        output.write(f"CREATE TEMPORARY TABLE `{temp_table}` (`id` BIGINT NOT NULL PRIMARY KEY);\n")
         output.write(
-            "DELETE dao FROM `data_annotation_object` dao "
-            "INNER JOIN `data` d ON dao.data_id=d.id "
-            f"WHERE d.dataset_id={dataset_var} AND d.type='SINGLE_DATA' "
-            f"AND d.split_type IN ({split_sql});\n\n"
+            f"INSERT INTO `{temp_table}` (`id`) SELECT id FROM `data` "
+            f"WHERE dataset_id={dataset_var} AND split_type IN ({split_sql});\n"
         )
+        for table in (
+            "data_annotation_object",
+            "data_annotation_classification",
+            "data_classification_option",
+            "data_scene_attribute",
+            "model_data_result",
+            "model_dataset_result",
+        ):
+            output.write(
+                f"DELETE target FROM `{table}` target "
+                f"INNER JOIN `{temp_table}` old_data ON target.data_id=old_data.id;\n"
+            )
+        output.write(
+            f"DELETE target FROM `data_edit` target "
+            f"INNER JOIN `{temp_table}` old_data ON target.data_id=old_data.id;\n"
+        )
+        output.write(
+            f"DELETE target FROM `data_edit` target "
+            f"INNER JOIN `{temp_table}` old_scene ON target.scene_id=old_scene.id;\n"
+        )
+        output.write(
+            f"DELETE target FROM `data` target "
+            f"INNER JOIN `{temp_table}` old_data ON target.id=old_data.id;\n"
+        )
+        output.write(f"DROP TEMPORARY TABLE `{temp_table}`;\n\n")
 
     class_vars: dict[str, str] = {}
     file_index = 0
@@ -413,7 +439,7 @@ def main() -> None:
     parser.add_argument(
         "--replace-split",
         action="store_true",
-        help="Delete existing object annotations only for the selected PKL split before re-importing it",
+        help="Delete existing data and annotations for the selected PKL split before re-importing it",
     )
     parser.add_argument("--source", choices=("pkl", "labels"), default="pkl", help="Read KITTI infos pkl or raw label_2/calib files")
     parser.add_argument("--pkl-split", choices=("train", "val", "all"), default="train", help="KITTI infos split to import in pkl mode")
