@@ -55,6 +55,9 @@ export default function useHeader() {
         let { frameIndex, frames } = editor.state;
         return frames[frameIndex];
     });
+    let isEvaluationReview = computed(
+        () => bsState.query.humanReview === '1' && !!bsState.query.evaluationId,
+    );
 
     let onIndexChange = _.debounce(() => {
         console.log('change', dataIndex.value);
@@ -123,7 +126,11 @@ export default function useHeader() {
             : iState.frameName;
     };
     function onSave() {
-        editor.saveObject();
+        editor.saveObject(isEvaluationReview.value ? [currentFrame.value] : undefined);
+    }
+
+    function onSaveAll() {
+        editor.saveObject(editor.state.frames);
     }
 
     function onMergeSelected() {
@@ -276,6 +283,33 @@ export default function useHeader() {
         const seriesFrameId = editor.bsState.seriesFrameId;
         let frame = frames[frameIndex];
 
+        if (isEvaluationReview.value) {
+            if (editor.needSave()) {
+                editor.showMsg(
+                    'warning',
+                    'There are unsaved frame changes. Use Save or Save All first.',
+                );
+                return;
+            }
+            const savedFrameIds = editor.getEvaluationSavedFrameIds();
+            if (savedFrameIds.length === 0) {
+                editor.showMsg('warning', 'No saved frame changes to submit.');
+                return;
+            }
+            bsState.submitting = true;
+            try {
+                await api.submitSelectedData(savedFrameIds);
+                editor.clearEvaluationSavedFrameIds();
+                editor.showMsg('success', 'Submit Success');
+                await unlockData();
+            } catch (error: any) {
+                editor.handleErr(error, 'Operation Error');
+            } finally {
+                bsState.submitting = false;
+            }
+            return;
+        }
+
         let objects = editor.dataManager.getFrameObject(frame.id) || [];
         if (isSeriesFrame) {
             objects = [];
@@ -424,6 +458,7 @@ export default function useHeader() {
         $$,
         iState,
         currentFrame,
+        isEvaluationReview,
         blocking,
         dataIndex,
         removeBoxPoints,
@@ -437,6 +472,7 @@ export default function useHeader() {
         onHelp,
         onIndexBlur,
         onSave,
+        onSaveAll,
         onMergeSelected,
         onMergeAll,
         onCancelMerge,

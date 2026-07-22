@@ -32,9 +32,14 @@ function evaluationClassKey(object: any) {
     return aliases[key] || key;
 }
 
-function prepareEvaluationGroundTruth(objects: any[], humanReview: boolean) {
+function prepareEvaluationGroundTruth(objects: any[], humanReview: boolean, targetClass?: string) {
     if (!humanReview) return objects.filter((object) => !isEvaluationPrediction(object));
-    return objects;
+    const targetKey = evaluationClassKey({ classType: targetClass });
+    return objects.filter(
+        (object) =>
+            !isEvaluationPrediction(object) ||
+            (!!targetKey && evaluationClassKey(object) === targetKey),
+    );
 }
 export default class Editor extends BaseEditor {
     businessManager: BusinessManager;
@@ -42,6 +47,15 @@ export default class Editor extends BaseEditor {
     multiFrameMergeManager: MultiFrameMergeManager;
     bsState: IBSState = getDefault();
     private evaluationFrameObjectsLoading?: Promise<void>;
+    private evaluationSavedFrameIds = new Set<string>();
+
+    getEvaluationSavedFrameIds() {
+        return Array.from(this.evaluationSavedFrameIds);
+    }
+
+    clearEvaluationSavedFrameIds() {
+        this.evaluationSavedFrameIds.clear();
+    }
     constructor() {
         super();
 
@@ -138,7 +152,11 @@ export default class Editor extends BaseEditor {
             const humanReview = bsState.query.humanReview === '1';
             let data = utils.convertAnnotate2Object(annotates, this);
             if (bsState.query.showEvaluation || bsState.query.evaluationId) {
-                data = prepareEvaluationGroundTruth(data, humanReview);
+                data = prepareEvaluationGroundTruth(
+                    data,
+                    humanReview,
+                    bsState.query.evaluationTargetClass,
+                );
             }
             let infos = [] as any[];
             let dataAnnotations = [] as any[];
@@ -185,6 +203,7 @@ export default class Editor extends BaseEditor {
             });
         });
 
+        const savedDataIds = new Set(dataInfos.map((info) => String(info.dataId)));
         let objectInfo = {
             datasetId: bsState.datasetId,
             dataInfos: dataInfos,
@@ -196,8 +215,18 @@ export default class Editor extends BaseEditor {
             await api.saveObject(objectInfo).then((keyMap) => {
                 this.updateBackId(keyMap);
                 frames.forEach((frame) => {
+                    if (!savedDataIds.has(String(frame.id))) return;
                     const annotates = this.dataManager.getFrameObject(frame.id) || [];
                     annotates.forEach((annotate: any) => {
+                        if (
+                            isEvaluationPrediction(annotate.userData) &&
+                            evaluationClassKey(annotate.userData) !==
+                                evaluationClassKey({
+                                    classType: bsState.query.evaluationTargetClass,
+                                })
+                        ) {
+                            return;
+                        }
                         annotate.userData.sourceId = this.state.config.withoutTaskId;
                         annotate.userData.sourceType = SourceType.DATA_FLOW;
                         annotate.userData.modelRun = '';
@@ -206,8 +235,12 @@ export default class Editor extends BaseEditor {
                 });
             });
             frames.forEach((e) => {
+                if (!savedDataIds.has(String(e.id))) return;
                 e.needSave = false;
             });
+            if (bsState.query.humanReview === '1') {
+                dataInfos.forEach((info) => this.evaluationSavedFrameIds.add(String(info.dataId)));
+            }
             this.showMsg('success', this.lang('save-ok'));
         } catch (e: any) {
             console.error(e);

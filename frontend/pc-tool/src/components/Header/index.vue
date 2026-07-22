@@ -69,6 +69,17 @@
                 <template #icon><SaveOutlined /></template>
                 <div class="title">{{ $$('btn-save') }}</div>
             </a-button>
+            <a-button
+                class="basic-btn"
+                v-if="has(BsUIType.flowSave) && isEvaluationReview && state.frames.length > 1"
+                :disabled="blocking"
+                size="large"
+                :loading="bsState.saving"
+                @click="onSaveAll"
+            >
+                <template #icon><SaveOutlined /></template>
+                <div class="title">Save All</div>
+            </a-button>
             <!-- shortcut -->
             <a-button class="basic-btn" size="large" :disabled="blocking" @click="onHelp">
                 <template #icon
@@ -182,6 +193,7 @@
         iState,
         blocking,
         currentFrame,
+        isEvaluationReview,
         dataIndex,
         removeBoxPoints,
         selectedMergeCount,
@@ -193,6 +205,7 @@
         onHelp,
         onIndexBlur,
         onSave,
+        onSaveAll,
         onMergeSelected,
         onMergeAll,
         onCancelMerge,

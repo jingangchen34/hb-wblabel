@@ -53,6 +53,8 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
     const raw = item?.classAttributes || item || {};
     const sourceId = source === 'GT' ? EVALUATION_GT_SOURCE_ID : EVALUATION_PRED_SOURCE_ID;
     const sourceType = source === 'GT' ? SourceType.DATA_FLOW : SourceType.MODEL;
+    const rawTrackId = raw.trackId ?? raw.trackID ?? index;
+    const evaluationTrackId = `${source}-${dataId}-${rawTrackId}`;
     if (raw.contour?.center3D && raw.contour?.size3D) {
         return {
             ...raw,
@@ -64,8 +66,8 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
             classType: raw.classType || raw.className || raw.modelClass || raw.label || raw.meta?.classType,
             modelClass: raw.modelClass || raw.className || raw.label || raw.classType || raw.meta?.classType,
             modelConfidence: raw.modelConfidence ?? raw.confidence,
-            trackId: raw.trackId || raw.trackID || `${source}-${index}`,
-            trackID: raw.trackID || raw.trackId || `${source}-${index}`,
+            trackId: evaluationTrackId,
+            trackID: evaluationTrackId,
             trackName: raw.trackName || raw.displayText || (source === 'PRED' && (raw.modelConfidence ?? raw.confidence) !== undefined
                 ? `${raw.modelClass || raw.className || raw.label || raw.classType || raw.meta?.classType || 'unknown'} ${Number(raw.modelConfidence ?? raw.confidence).toFixed(2)}`
                 : undefined),
@@ -86,8 +88,8 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
         modelClass: label,
         classType: label,
         modelConfidence: confidence,
-        trackId: raw.trackId || raw.trackID || `${source}-${index}`,
-        trackID: raw.trackID || raw.trackId || `${source}-${index}`,
+        trackId: evaluationTrackId,
+        trackID: evaluationTrackId,
         trackName: raw.trackName || raw.displayText || (source === 'PRED' && confidence !== undefined
             ? `${label} ${Number(confidence).toFixed(2)}`
             : label),

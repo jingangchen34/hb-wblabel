@@ -14,3 +14,6 @@ export async function submitData(dataId: string) {
     let url = `/api/data/flow/submit/${dataId}`;
     let data = await post(url);
 }
+export async function submitSelectedData(dataIds: string[]) {
+    await post('/api/data/flow/submitSelected', dataIds);
+}

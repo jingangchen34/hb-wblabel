@@ -117,8 +117,8 @@
                 <td>{{ formatOptionalRate(row.falseDetectionRate) }}</td>
                 <td>{{ formatOptionalRate(row.missRate) }}</td>
                 <td class="safety-metrics__actions">
-                  <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
-                  <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
+                  <Button size="small" :disabled="!row.falsePositiveDataIds?.length" @click="openEvaluationFrames(row.falsePositiveDataIds, row.className)">FP {{ row.falsePositiveDataIds?.length || 0 }}</Button>
+                  <Button size="small" :disabled="!row.missedDataIds?.length" @click="openEvaluationFrames(row.missedDataIds, row.className)">Miss {{ row.missedDataIds?.length || 0 }}</Button>
                 </td>
               </tr>
             </tbody>
@@ -281,7 +281,7 @@
         color: markerColors[index],
       })),
   );
-  const openEvaluationFrames = (dataIds: Array<number | string>) => {
+  const openEvaluationFrames = (dataIds: Array<number | string>, targetClass: string) => {
     const record = selectedMetricsRecord.value;
     if (!record || !dataIds?.length) return;
     const frameSetKey = `evaluation-frame-set:${record.id}:${Date.now()}`;
@@ -294,6 +294,7 @@
       evaluationId: record.id,
       showEvaluation: 1,
       evaluationFrameSetKey: frameSetKey,
+      evaluationTargetClass: targetClass,
     }, props.datasetType);
   };
 

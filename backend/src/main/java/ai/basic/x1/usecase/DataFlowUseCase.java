@@ -84,4 +84,18 @@ public class DataFlowUseCase {
         }
     }
 
+    @Transactional(rollbackFor = Exception.class)
+    public void submitSelected(Set<Long> dataIds) {
+        dataEditUseCase.checkLock(dataIds);
+        dataInfoDAO.listByIds(dataIds).forEach(dataInfo -> {
+            DataAnnotationStatusEnum annotationStatus = DataStatusEnum.VALID.equals(dataInfo.getStatus())
+                    ? DataAnnotationStatusEnum.ANNOTATED
+                    : DataAnnotationStatusEnum.INVALID;
+            dataInfoDAO.updateById(DataInfo.builder()
+                    .id(dataInfo.getId())
+                    .status(dataInfo.getStatus())
+                    .annotationStatus(annotationStatus)
+                    .build());
+        });
+    }
 }
