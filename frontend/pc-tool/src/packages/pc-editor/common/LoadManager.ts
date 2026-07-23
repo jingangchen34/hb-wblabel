@@ -7,7 +7,8 @@ import { AnnotateObject } from 'pc-render';
 import Event from '../config/event';
 
 export default class LoadManager {
-    private static readonly OBJECT_PREFETCH_COUNT = 10;
+    private static readonly OBJECT_PREFETCH_COUNT = 50;
+    private static readonly OBJECT_PREFETCH_LOW_WATER = 25;
     editor: Editor;
     private preloadingObjectPromises = new Map<string, Promise<void>>();
 
@@ -47,9 +48,18 @@ export default class LoadManager {
 
     async preloadNearbyObjects(index: number) {
         const { frames } = this.editor.state;
-        const targetFrames = frames
-            .slice(index + 1, index + 1 + LoadManager.OBJECT_PREFETCH_COUNT)
-            .filter((frame) =>
+        const aheadFrames = frames.slice(
+            index + 1,
+            index + 1 + LoadManager.OBJECT_PREFETCH_COUNT,
+        );
+        const readyCount = aheadFrames.filter((frame) =>
+            this.editor.dataManager.getFrameObject(frame.id) ||
+            this.preloadingObjectPromises.has(frame.id),
+        ).length;
+        const lowWater = Math.min(LoadManager.OBJECT_PREFETCH_LOW_WATER, aheadFrames.length);
+        if (readyCount >= lowWater) return;
+
+        const targetFrames = aheadFrames.filter((frame) =>
             !this.editor.dataManager.getFrameObject(frame.id) &&
             !this.preloadingObjectPromises.has(frame.id),
         );
@@ -316,10 +326,13 @@ export default class LoadManager {
                     content: `${this.editor.lang('load-point')}${percent}%`,
                 });
             };
+            const frameId = frame.id;
             return resource
                 .get()
                 .then(async (data) => {
-                    await this.setResource(data);
+                    if (this.editor.getCurrentFrame()?.id === frameId) {
+                        await this.setResource(data);
+                    }
                 })
                 .catch((e) => {
                     this.editor.handleErr(e, this.editor.lang('load-resource-error'));
@@ -330,17 +343,30 @@ export default class LoadManager {
     }
 
     async setResource(data: IDataResource) {
-        if (data.viewConfig.length > 0 && data.viewConfig.some((config) => !config.imgObject)) {
-            await this.editor.dataResource.loadImage(data.viewConfig, this.editor.getCurrentFrame()?.id);
-        }
-        this.editor.viewManager.setImgViews(data.viewConfig);
-        // if (!this.playManger.playing) this.editor.setImgViews(data.viewConfig);
-        // this.editor.setPointCloudData(data.pointsData, 0);
         this.editor.setPointCloudData(data.pointsData, data.ground || 0, data.intensityRange);
         if (data.occData) {
             this.editor.setOccGridData(data.occData);
         } else {
             this.editor.pc.clearOccGrid();
+        }
+
+        const currentFrame = this.editor.getCurrentFrame();
+        if (!currentFrame) return;
+        const frameId = currentFrame.id;
+        const applyImages = () => {
+            const activeFrame = this.editor.getCurrentFrame();
+            if (activeFrame?.id === frameId && this.editor.dataResource.dataMap[frameId] === data) {
+                this.editor.viewManager.setImgViews(data.viewConfig);
+            }
+        };
+        if (data.viewConfig.length > 0 && data.viewConfig.some((config) => !config.imgObject)) {
+            void this.editor.dataResource.preloadImages(data.viewConfig, frameId)
+                .then(applyImages)
+                .catch((error) => {
+                    console.warn(`load image: ${frameId} err`, error);
+                });
+        } else {
+            applyImages();
         }
     }
 }

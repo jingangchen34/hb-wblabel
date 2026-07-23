@@ -6,7 +6,7 @@ import * as utils from '../utils';
 import Event from '../config/event';
 import { IImgViewConfig } from 'pc-editor';
 
-export type LoadMode = 'current' | 'near_2' | 'ahead_10' | 'all';
+export type LoadMode = 'current' | 'near_2' | 'rolling' | 'all';
 export class ResourceLoader {
     manual: boolean = false;
     data: IFrame;
@@ -87,15 +87,22 @@ export class ResourceLoader {
                 this.dataResource.setResource(this.data, config);
                 logStep('setResource', setResourceStartedAt);
                 const imagePromise = (this.manual || this.dataResource.shouldPreloadImages(this.data)) && config.viewConfig.length > 0
-                    ? this.dataResource.loadImage(config.viewConfig, this.data.id + '')
+                    ? this.dataResource.preloadImages(config.viewConfig, this.data.id + '')
                     : Promise.resolve();
-                await imagePromise.then(() => {
+                const applyImages = () => {
                     if (this.dataResource.editor.getCurrentFrame()?.id === this.data.id) {
                         this.dataResource.editor.viewManager.setImgViews(config.viewConfig);
                     }
-                }).catch((error) => {
-                    console.warn(`load image: ${this.data.id} err`, error);
-                });
+                };
+                if (this.manual) {
+                    await imagePromise.then(applyImages).catch((error) => {
+                        console.warn(`load image: ${this.data.id} err`, error);
+                    });
+                } else {
+                    void imagePromise.then(applyImages).catch((error) => {
+                        console.warn(`preload image: ${this.data.id} err`, error);
+                    });
+                }
 
                 console.log(`load resource: ${this.data.id} completed`);
                 this.data.loadState = 'complete';
@@ -129,12 +136,15 @@ export class ResourceLoader {
 }
 
 export default class DataResource {
-    private static readonly PREFETCH_CONCURRENCY = 2;
+    private static readonly PREFETCH_AHEAD = 30;
+    private static readonly RETAIN_BEHIND = 8;
+    private static readonly PREFETCH_CONCURRENCY = 3;
     loadMax: number = 500;
     loadMode: LoadMode;
     editor: Editor;
     dataMap: Record<string, IDataResource> = {};
     loaders: ResourceLoader[] = [];
+    private imagePromises = new Map<string, Promise<void>>();
     pointsLoader: PCDLoader = new PCDLoader();
     labelBinLoader: LabelBinLoader = new LabelBinLoader();
     constructor(editor: Editor) {
@@ -145,6 +155,7 @@ export default class DataResource {
     clear() {
         this.dataMap = {};
         this.loaders = [];
+        this.imagePromises.clear();
     }
 
     async loadDataConfig(data: IFrame) {
@@ -190,6 +201,29 @@ export default class DataResource {
                 };
             });
         }
+    }
+    preloadImages(viewConfigs: IImgViewConfig[], frameId: string) {
+        const existing = this.imagePromises.get(frameId);
+        if (existing) return existing;
+        const promise = this.loadImage(viewConfigs, frameId).finally(() => {
+            this.imagePromises.delete(frameId);
+        });
+        this.imagePromises.set(frameId, promise);
+        return promise;
+    }
+    preloadNearbyImages(centerIndex: number = this.editor.state.frameIndex) {
+        if (this.loadMode !== 'rolling') return;
+        const frames = this.editor.state.frames.slice(
+            centerIndex,
+            centerIndex + 11,
+        );
+        frames.forEach((frame) => {
+            const resource = this.dataMap[frame.id];
+            if (!resource || resource.viewConfig.length === 0) return;
+            void this.preloadImages(resource.viewConfig, frame.id).catch((error) => {
+                console.warn(`preload image: ${frame.id} err`, error);
+            });
+        });
     }
     shouldPreloadImages(data: IFrame) {
         const index = this.editor.state.frames.findIndex((frame) => frame.id === data.id);
@@ -287,7 +321,9 @@ export default class DataResource {
 
     load(fromIndex?: number) {
         let { frameIndex } = this.editor.state;
-        const maxLoaders = this.loadMode === 'ahead_10' ? DataResource.PREFETCH_CONCURRENCY : 1;
+        this.trimCache();
+        this.preloadNearbyImages();
+        const maxLoaders = this.loadMode === 'rolling' ? DataResource.PREFETCH_CONCURRENCY : 1;
         if (this.loaders.length >= maxLoaders) return;
 
         let loaderN = Object.keys(this.dataMap).filter((e) => this.dataMap[e]).length;
@@ -329,13 +365,15 @@ export default class DataResource {
             if (data.loadState !== '') continue;
 
             let isNear2 = Math.abs(i - fromIndex) <= 1;
-            let isAhead10 = i >= fromIndex - 1 && i <= fromIndex + 10;
+            let isRolling =
+                i >= fromIndex - DataResource.RETAIN_BEHIND &&
+                i <= fromIndex + DataResource.PREFETCH_AHEAD;
             let isFuture = i >= fromIndex;
             let weight = isFuture ? 100000 - (i - fromIndex) : 1000 - (fromIndex - i);
             weight = isNear2 ? Infinity - Math.abs(i - fromIndex) : weight;
             if (
                 (this.loadMode === 'near_2' && isNear2) ||
-                (this.loadMode === 'ahead_10' && isAhead10) ||
+                (this.loadMode === 'rolling' && isRolling) ||
                 (this.loadMode === 'current' && i === fromIndex)
             ) {
                 if (weight > maxWeight) {
@@ -362,6 +400,19 @@ export default class DataResource {
 
     setResource(data: IFrame, resource: IDataResource) {
         this.dataMap[data.id] = resource;
+    }
+    trimCache(centerIndex: number = this.editor.state.frameIndex) {
+        if (this.loadMode !== 'rolling') return;
+        const { frames } = this.editor.state;
+        frames.forEach((frame, index) => {
+            const inWindow =
+                index >= centerIndex - DataResource.RETAIN_BEHIND &&
+                index <= centerIndex + DataResource.PREFETCH_AHEAD;
+            if (inWindow || this.loaders.some((loader) => loader.data.id === frame.id)) return;
+            if (!this.dataMap[frame.id]) return;
+            delete this.dataMap[frame.id];
+            if (frame.loadState === 'complete') frame.loadState = '';
+        });
     }
 
     loadNext(data: IFrame, manual: boolean = false) {
