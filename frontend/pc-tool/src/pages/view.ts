@@ -56,7 +56,7 @@ export function view(): IPageHandler {
             editor.bsState.seriesFrameId = String((frames[0] as any).parentId || '');
             editor.bsState.seriesFrameName = 'Evaluation anomalies (' + frames.length + ')';
             editor.setFrames(frames);
-            editor.dataResource.setLoadMode('near_2');
+            editor.dataResource.setLoadMode('ahead_10');
             return;
         }
         if (['frame', 'scene'].some((e) => new RegExp(e, 'i').test(query.dataType))) {

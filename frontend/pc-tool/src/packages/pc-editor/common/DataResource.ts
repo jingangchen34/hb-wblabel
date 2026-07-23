@@ -6,7 +6,7 @@ import * as utils from '../utils';
 import Event from '../config/event';
 import { IImgViewConfig } from 'pc-editor';
 
-export type LoadMode = 'current' | 'near_2' | 'all';
+export type LoadMode = 'current' | 'near_2' | 'ahead_10' | 'all';
 export class ResourceLoader {
     manual: boolean = false;
     data: IFrame;
@@ -129,6 +129,7 @@ export class ResourceLoader {
 }
 
 export default class DataResource {
+    private static readonly PREFETCH_CONCURRENCY = 2;
     loadMax: number = 500;
     loadMode: LoadMode;
     editor: Editor;
@@ -193,7 +194,7 @@ export default class DataResource {
     shouldPreloadImages(data: IFrame) {
         const index = this.editor.state.frames.findIndex((frame) => frame.id === data.id);
         const distance = index - this.editor.state.frameIndex;
-        return index >= 0 && distance >= 0 && distance <= 2;
+        return index >= 0 && distance >= -1 && distance <= 10;
     }
 
     setGround(ground: number, frameId: string) {
@@ -286,20 +287,21 @@ export default class DataResource {
 
     load(fromIndex?: number) {
         let { frameIndex } = this.editor.state;
-        if (this.loaders.length > 0) return;
+        const maxLoaders = this.loadMode === 'ahead_10' ? DataResource.PREFETCH_CONCURRENCY : 1;
+        if (this.loaders.length >= maxLoaders) return;
 
         let loaderN = Object.keys(this.dataMap).filter((e) => this.dataMap[e]).length;
         if (loaderN > this.loadMax) return;
 
         fromIndex = fromIndex || frameIndex;
-        let data = this.getNext(fromIndex < 0 ? 0 : fromIndex);
-
-        if (!data) {
-            console.log('load complete');
-            return;
+        while (this.loaders.length < maxLoaders) {
+            const data = this.getNext(fromIndex < 0 ? 0 : fromIndex);
+            if (!data) {
+                console.log('load complete');
+                return;
+            }
+            this.loadNext(data);
         }
-
-        this.loadNext(data);
     }
 
     getNext(fromIndex: number) {
@@ -327,12 +329,13 @@ export default class DataResource {
             if (data.loadState !== '') continue;
 
             let isNear2 = Math.abs(i - fromIndex) <= 1;
+            let isAhead10 = i >= fromIndex - 1 && i <= fromIndex + 10;
             let isFuture = i >= fromIndex;
             let weight = isFuture ? 100000 - (i - fromIndex) : 1000 - (fromIndex - i);
             weight = isNear2 ? Infinity - Math.abs(i - fromIndex) : weight;
             if (
-                this.loadMode === 'all' ||
                 (this.loadMode === 'near_2' && isNear2) ||
+                (this.loadMode === 'ahead_10' && isAhead10) ||
                 (this.loadMode === 'current' && i === fromIndex)
             ) {
                 if (weight > maxWeight) {
