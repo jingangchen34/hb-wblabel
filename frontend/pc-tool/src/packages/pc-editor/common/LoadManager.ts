@@ -7,6 +7,7 @@ import { AnnotateObject } from 'pc-render';
 import Event from '../config/event';
 
 export default class LoadManager {
+    private static readonly OBJECT_PREFETCH_COUNT = 10;
     editor: Editor;
     private preloadingObjectPromises = new Map<string, Promise<void>>();
 
@@ -46,7 +47,9 @@ export default class LoadManager {
 
     async preloadNearbyObjects(index: number) {
         const { frames } = this.editor.state;
-        const targetFrames = frames.slice(index + 1, index + 4).filter((frame) =>
+        const targetFrames = frames
+            .slice(index + 1, index + 1 + LoadManager.OBJECT_PREFETCH_COUNT)
+            .filter((frame) =>
             !this.editor.dataManager.getFrameObject(frame.id) &&
             !this.preloadingObjectPromises.has(frame.id),
         );
