@@ -49,6 +49,16 @@ export async function getModelEvaluationCompare(evaluationId: string | number, d
     return res?.data || res;
 }
 
+export async function getModelEvaluationCompareBatch(
+    evaluationId: string | number,
+    dataIds: string[],
+) {
+    const args = queryStr({ dataIds });
+    const url = '/api/modelEvaluation/' + evaluationId + '/data/compare?' + args;
+    const res: any = await get(url);
+    return res?.data || res || [];
+}
+
 function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PRED', index: number): any {
     const raw = item?.classAttributes || item || {};
     const sourceId = source === 'GT' ? EVALUATION_GT_SOURCE_ID : EVALUATION_PRED_SOURCE_ID;
@@ -118,19 +128,18 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
 }
 
 async function getEvaluationObjectsMap(evaluationId: string | number, dataIds: string[]) {
-    const entries = await Promise.all(
-        dataIds.map(async (dataId) => {
-            const compare = await getModelEvaluationCompare(evaluationId, dataId);
-            const gt = (compare?.groundTruths || []).map((item: any, index: number) =>
-                utils.translateToObject(normalizeEvaluationObject(item, dataId, 'GT', index)),
-            );
-            const pred = (compare?.predictions || []).map((item: any, index: number) =>
-                utils.translateToObject(normalizeEvaluationObject(item, dataId, 'PRED', index)),
-            );
-            return [dataId, [...gt, ...pred]] as const;
-        }),
-    );
-    return entries.reduce((map, [dataId, objects]) => {
+    const compares = await getModelEvaluationCompareBatch(evaluationId, dataIds);
+    const entries = compares.map((compare: any) => {
+        const dataId = String(compare.dataId);
+        const gt = (compare?.groundTruths || []).map((item: any, index: number) =>
+            utils.translateToObject(normalizeEvaluationObject(item, dataId, 'GT', index)),
+        );
+        const pred = (compare?.predictions || []).map((item: any, index: number) =>
+            utils.translateToObject(normalizeEvaluationObject(item, dataId, 'PRED', index)),
+        );
+        return [dataId, [...gt, ...pred]] as const;
+    });
+    return entries.reduce((map: Record<string, any[]>, [dataId, objects]: readonly [string, any[]]) => {
         map[dataId] = objects;
         return map;
     }, {} as Record<string, any[]>);

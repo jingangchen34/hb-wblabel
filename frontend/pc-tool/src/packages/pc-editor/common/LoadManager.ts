@@ -8,6 +8,7 @@ import Event from '../config/event';
 
 export default class LoadManager {
     editor: Editor;
+    private preloadingObjectPromises = new Map<string, Promise<void>>();
 
     constructor(editor: Editor) {
         this.editor = editor;
@@ -29,6 +30,7 @@ export default class LoadManager {
         try {
             await this.editor.getResultSources();
             await Promise.all([this.loadObjectAndClassification(), this.loadResource()]);
+            void this.preloadNearbyObjects(index);
             if (!this.editor.playManager.playing) this.editor.dataResource.load();
         } catch (error: any) {
             this.editor.handleErr(error);
@@ -42,6 +44,48 @@ export default class LoadManager {
         this.editor.dispatchEvent({ type: Event.FRAME_CHANGE, data: this.editor.state.frameIndex });
     }
 
+    async preloadNearbyObjects(index: number) {
+        const { frames } = this.editor.state;
+        const targetFrames = frames.slice(index + 1, index + 4).filter((frame) =>
+            !this.editor.dataManager.getFrameObject(frame.id) &&
+            !this.preloadingObjectPromises.has(frame.id),
+        );
+        if (!targetFrames.length) return;
+
+        const preloadPromise = this.fetchFrameObjects(targetFrames);
+        targetFrames.forEach((frame) =>
+            this.preloadingObjectPromises.set(frame.id, preloadPromise),
+        );
+        try {
+            await preloadPromise;
+        } catch (error) {
+            console.warn('preload nearby objects error', error);
+        } finally {
+            targetFrames.forEach((frame) =>
+                this.preloadingObjectPromises.delete(frame.id),
+            );
+        }
+    }
+
+    private async fetchFrameObjects(targetFrames: IFrame[]) {
+        const { classifications, isSeriesFrame } = this.editor.state;
+        const data = await this.editor.businessManager.getFrameObject(targetFrames);
+        targetFrames.forEach((frame) => {
+            frame.queryTime = data.queryTime;
+            frame.classifications = utils.copyClassification(
+                classifications,
+                data.classificationMap[frame.id] || {},
+            );
+            const objects = data.objectsMap[frame.id] || [];
+            const annotates = utils.convertObject2Annotate(objects, this.editor);
+            annotates.forEach((object) => {
+                const userData = object.userData as IUserData;
+                if (!userData.id) userData.id = THREE.MathUtils.generateUUID();
+            });
+            if (isSeriesFrame) this.editor.trackManager.addTrackCount(annotates, frame);
+            this.editor.dataManager.setFrameObject(frame.id, annotates);
+        });
+    }
     async loadClassification() {
         let { frameIndex, frames, classifications } = this.editor.state;
         let frame = frames[frameIndex];
@@ -68,38 +112,41 @@ export default class LoadManager {
     }
 
     async loadObjectAndClassification() {
-        let { frameIndex, frames, classifications } = this.editor.state;
-        let frame = frames[frameIndex];
+        const { frameIndex, frames, classifications } = this.editor.state;
+        const frame = frames[frameIndex];
 
         let objects = this.editor.dataManager.getFrameObject(frame.id);
         if (!objects) {
+            const pending = this.preloadingObjectPromises.get(frame.id);
+            if (pending) {
+                try {
+                    await pending;
+                } catch (_) {
+                    // The foreground request below remains the fallback.
+                }
+                objects = this.editor.dataManager.getFrameObject(frame.id);
+            }
+        }
+        if (!objects) {
             try {
-                // let data = await api.getDataObject(datInfo.dataId);
-                let data = await this.editor.businessManager.getFrameObject(frame);
+                const data = await this.editor.businessManager.getFrameObject(frame);
                 frame.queryTime = data.queryTime;
-                // this.setTrackData(data.objectsMap);
-
                 frame.classifications = utils.copyClassification(
                     classifications,
                     data.classificationMap[frame.id] || {},
                 );
-
-                let objects = data.objectsMap[frame.id] || [];
-                let annotates = utils.convertObject2Annotate(objects, this.editor);
+                const rawObjects = data.objectsMap[frame.id] || [];
+                const annotates = utils.convertObject2Annotate(rawObjects, this.editor);
                 this.editor.dataManager.setFrameObject(frame.id, annotates);
                 this.editor.dataManager.updateFrameId(frame.id);
             } catch (error: any) {
                 this.editor.handleErr(error, this.editor.lang('load-object-error'));
             }
         }
-        // console.log(annotates);
 
-        // this.editor.reset();
         this.editor.state.filterActive = [];
-        // this.editor.dataManager.setFilterFromData();
         this.editor.dataManager.loadDataFromManager();
         this.editor.updateIDCounter();
-        // this.editor.pc.addObject(annotates);
     }
     updateTrackMap(frames?: IFrame[]) {
         const { state } = this.editor;

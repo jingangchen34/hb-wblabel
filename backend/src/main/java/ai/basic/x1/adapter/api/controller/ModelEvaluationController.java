@@ -11,6 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/modelEvaluation/")
 public class ModelEvaluationController extends BaseController {
@@ -39,6 +41,13 @@ public class ModelEvaluationController extends BaseController {
     public ModelEvaluationCompareDTO compare(@PathVariable Long evaluationId, @PathVariable Long dataId) {
         return modelEvaluationUseCase.compare(evaluationId, dataId);
     }
+
+    @GetMapping("{evaluationId}/data/compare")
+    public List<ModelEvaluationCompareDTO> compareBatch(@PathVariable Long evaluationId,
+                                                        @RequestParam List<Long> dataIds) {
+        return modelEvaluationUseCase.compareBatch(evaluationId, dataIds);
+    }
+
     @PostMapping("delete/{id}")
     public void delete(@PathVariable Long id) {
         var user = loggedUser();

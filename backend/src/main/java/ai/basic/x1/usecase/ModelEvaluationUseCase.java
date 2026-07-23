@@ -38,6 +38,7 @@ import org.springframework.beans.factory.annotation.Value;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
@@ -118,34 +119,43 @@ public class ModelEvaluationUseCase {
     }
 
     public ModelEvaluationCompareDTO compare(Long evaluationId, Long dataId) {
+        return compareBatch(evaluationId, List.of(dataId)).get(0);
+    }
+
+    public List<ModelEvaluationCompareDTO> compareBatch(Long evaluationId, List<Long> dataIds) {
         var record = modelEvaluationRecordDAO.getById(evaluationId);
         if (record == null) {
             throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Evaluation record does not exist.");
         }
-        var gtWrapper = Wrappers.lambdaQuery(DataAnnotationObject.class)
-                .eq(DataAnnotationObject::getDataId, dataId)
-                .eq(DataAnnotationObject::getSourceId, -1L);
-        var groundTruths = dataAnnotationObjectDAO.list(gtWrapper).stream()
-                .map(DataAnnotationObject::getClassAttributes)
-                .peek(obj -> {
-                    obj.set("source", "GT");
-                    obj.set("color", "#22c55e");
-                })
-                .collect(Collectors.toList());
-        var predictions = new ArrayList<JSONObject>();
-        var predictionMap = record.getPredictions();
-        if (predictionMap != null) {
-            var predArray = predictionMap.getJSONArray(String.valueOf(dataId));
-            if (predArray != null) {
-                predArray.forEach(item -> predictions.add(JSONUtil.parseObj(item)));
-            }
+        if (CollUtil.isEmpty(dataIds)) {
+            return List.of();
         }
-        return ModelEvaluationCompareDTO.builder()
-                .evaluationId(evaluationId)
-                .dataId(dataId)
-                .groundTruths(groundTruths)
-                .predictions(predictions)
-                .build();
+        var gtWrapper = Wrappers.lambdaQuery(DataAnnotationObject.class)
+                .in(DataAnnotationObject::getDataId, dataIds)
+                .eq(DataAnnotationObject::getSourceId, -1L);
+        var groundTruthMap = new HashMap<Long, List<JSONObject>>();
+        dataAnnotationObjectDAO.list(gtWrapper).forEach(item -> {
+            var obj = item.getClassAttributes();
+            obj.set("source", "GT");
+            obj.set("color", "#22c55e");
+            groundTruthMap.computeIfAbsent(item.getDataId(), ignored -> new ArrayList<>()).add(obj);
+        });
+        var predictionMap = record.getPredictions();
+        return dataIds.stream().distinct().map(dataId -> {
+            var predictions = new ArrayList<JSONObject>();
+            if (predictionMap != null) {
+                var predArray = predictionMap.getJSONArray(String.valueOf(dataId));
+                if (predArray != null) {
+                    predArray.forEach(item -> predictions.add(JSONUtil.parseObj(item)));
+                }
+            }
+            return ModelEvaluationCompareDTO.builder()
+                    .evaluationId(evaluationId)
+                    .dataId(dataId)
+                    .groundTruths(groundTruthMap.getOrDefault(dataId, List.of()))
+                    .predictions(predictions)
+                    .build();
+        }).collect(Collectors.toList());
     }
 
     private List<Long> resolveDatasetIds(ModelEvaluationCreateBO createBO) {

@@ -22,7 +22,7 @@ export class ResourceLoader {
             (e) => e.data.id !== this.data.id,
         );
 
-        const delay = this.manual ? 250 : 500;
+        const delay = this.manual ? 0 : 30;
         window.setTimeout(() => {
             this.dataResource.load();
         }, delay);
@@ -86,10 +86,10 @@ export class ResourceLoader {
                 const setResourceStartedAt = performance.now();
                 this.dataResource.setResource(this.data, config);
                 logStep('setResource', setResourceStartedAt);
-                const imagePromise = this.manual && config.viewConfig.length > 0
+                const imagePromise = (this.manual || this.dataResource.shouldPreloadImages(this.data)) && config.viewConfig.length > 0
                     ? this.dataResource.loadImage(config.viewConfig, this.data.id + '')
                     : Promise.resolve();
-                imagePromise.then(() => {
+                await imagePromise.then(() => {
                     if (this.dataResource.editor.getCurrentFrame()?.id === this.data.id) {
                         this.dataResource.editor.viewManager.setImgViews(config.viewConfig);
                     }
@@ -190,6 +190,12 @@ export default class DataResource {
             });
         }
     }
+    shouldPreloadImages(data: IFrame) {
+        const index = this.editor.state.frames.findIndex((frame) => frame.id === data.id);
+        const distance = index - this.editor.state.frameIndex;
+        return index >= 0 && distance >= 0 && distance <= 2;
+    }
+
     setGround(ground: number, frameId: string) {
         const source = this.dataMap[frameId];
         if (source.pointsData) {
