@@ -88,6 +88,7 @@ services:
       OCC_ANNOTATION_PATH: /app/data/occ-annotations
     volumes:
       - occ-annotations:/app/data/occ-annotations
+      - ${EXTERNAL_DATA_ROOT:-/home/user/cjg/conch_data}:/external-data:ro
     healthcheck:
       test:
         [

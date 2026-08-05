@@ -367,6 +367,58 @@ export async function saveSceneAttribute(attribute: ISceneAttribute) {
     await post(`/api/data/sceneAttribute`, attribute);
 }
 
+export type FrameTag = 'splash' | 'rut' | 'dust';
+
+export interface IFrameTagExportRequest {
+    datasetId: string;
+    sceneId?: string;
+    tags: FrameTag[];
+}
+
+export interface IFrameTagCounts {
+    splash: number;
+    rut: number;
+    dust: number;
+}
+
+export interface IExportRecord {
+    serialNumber: string;
+    status: 'UNSTARTED' | 'GENERATING' | 'COMPLETED' | 'FAILED';
+    generatedNum?: number;
+    totalNum?: number;
+    fileName?: string;
+    filePath?: string;
+}
+
+export async function getFrameTag(dataId: string) {
+    const res = await get(`/api/data/frameTag`, { dataId });
+    return (res.data || {}) as ISceneAttribute;
+}
+
+export async function saveFrameTag(dataId: string, datasetId: string, tag?: FrameTag) {
+    await post(`/api/data/frameTag`, {
+        datasetId,
+        dataId,
+        category: 'capture_condition',
+        subType: tag || '',
+    });
+}
+
+export async function getFrameTagCounts(datasetId: string, sceneId?: string) {
+    const res = await get(`/api/data/frameTag/counts`, { datasetId, sceneId });
+    return (res.data || {}) as IFrameTagCounts;
+}
+
+export async function exportTaggedFrames(request: IFrameTagExportRequest) {
+    const res = await post(`/api/data/frameTag/export`, request);
+    return String(res.data || '');
+}
+
+export async function getExportRecord(serialNumber: string) {
+    const res = await get(`/api/data/findExportRecordBySerialNumbers`, { serialNumbers: serialNumber });
+    return ((res.data || [])[0] || {}) as IExportRecord;
+}
+
 function buildFrameInfo(dataConfig: string | number | Record<string, any>, datasetId: string): IFrame {
     const isObject = typeof dataConfig === 'object' && dataConfig !== null;
     const dataId = isObject ? dataConfig.id || dataConfig.dataId : dataConfig;

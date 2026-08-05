@@ -76,6 +76,9 @@ public class DataInfoController extends BaseDatasetController {
     @Autowired
     protected DataSceneAttributeUseCase dataSceneAttributeUseCase;
 
+    @Autowired
+    protected RawFrameExportUseCase rawFrameExportUseCase;
+
     @PostMapping("upload")
     public String upload(@RequestBody @Validated DataInfoUploadDTO dto, @LoggedUser LoggedUserDTO userDTO) throws IOException {
         var dataInfoUploadBO = DefaultConverter.convert(dto, DataInfoUploadBO.class);
@@ -116,6 +119,28 @@ public class DataInfoController extends BaseDatasetController {
     @PostMapping("sceneAttribute")
     public void saveSceneAttribute(@RequestBody @Validated DataSceneAttributeDTO dto, @LoggedUser LoggedUserDTO userDTO) {
         dataSceneAttributeUseCase.save(DefaultConverter.convert(dto, DataSceneAttributeBO.class), userDTO.getId());
+    }
+
+    @GetMapping("frameTag")
+    public DataSceneAttributeDTO getFrameTag(@NotNull(message = "dataId cannot be null") @RequestParam Long dataId) {
+        return DefaultConverter.convert(dataSceneAttributeUseCase.findFrameTag(dataId), DataSceneAttributeDTO.class);
+    }
+
+    @PostMapping("frameTag")
+    public void saveFrameTag(@RequestBody @Validated DataSceneAttributeDTO dto, @LoggedUser LoggedUserDTO userDTO) {
+        dataSceneAttributeUseCase.saveFrameTag(DefaultConverter.convert(dto, DataSceneAttributeBO.class), userDTO.getId());
+    }
+
+    @GetMapping("frameTag/counts")
+    public Map<String, Long> countFrameTags(@NotNull(message = "datasetId cannot be null") @RequestParam Long datasetId,
+                                            @RequestParam(required = false) Long sceneId) {
+        return dataSceneAttributeUseCase.countFrameTags(datasetId, sceneId);
+    }
+
+    @PostMapping("frameTag/export")
+    public String exportTaggedFrames(@RequestBody @Validated FrameTagExportDTO dto) {
+        var frameIds = dataSceneAttributeUseCase.findTaggedFrameIds(dto.getDatasetId(), dto.getSceneId(), dto.getTags());
+        return String.valueOf(rawFrameExportUseCase.export(dto.getDatasetId(), frameIds));
     }
 
     @GetMapping("listByIds")
