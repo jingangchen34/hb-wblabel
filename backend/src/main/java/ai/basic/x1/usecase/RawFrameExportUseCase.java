@@ -22,6 +22,7 @@ import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.ZipUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.alibaba.ttl.TtlRunnable;
@@ -60,7 +61,7 @@ public class RawFrameExportUseCase {
     private static final String EXTERNAL_BUCKET = "external-data";
     private static final Pattern FRAME_TOKEN = Pattern.compile("(\\d{10,})");
     private static final Set<String> STATIC_METADATA = Set.of(
-            "calib.json", "calib_cylindrical.json", "meta.json");
+            "calib.json", "calib_cylindrical.json");
     private static final ExecutorService EXECUTOR = ThreadUtil.newExecutor(2);
 
     @Autowired
@@ -96,8 +97,7 @@ public class RawFrameExportUseCase {
         if (dataset == null) {
             throw new UsecaseException("dataset not found: " + datasetId);
         }
-        var fileName = safeName(dataset.getName()) + "-selected-"
-                + TemporalAccessorUtil.format(OffsetDateTime.now(), DatePattern.PURE_DATETIME_PATTERN) + ".zip";
+        var fileName = resolveOriginalPackageName(dataset.getName(), frameIds) + ".zip";
         var serialNumber = IdUtil.getSnowflakeNextId();
         exportRecordDAO.save(ExportRecord.builder()
                 .serialNumber(serialNumber)
@@ -206,11 +206,94 @@ public class RawFrameExportUseCase {
                 copy(source, destination.resolve(metadata));
             }
         }
-        filterFrameJson(clipRoot.resolve("pose.json"), destination.resolve("pose.json"),
-                clipRoot, destination, selectedTokens, false);
+        var poseTokens = filterMetaJson(clipRoot.resolve("meta.json"), destination.resolve("meta.json"),
+                selectedTokens);
+        filterPoseJson(clipRoot.resolve("pose.json"), destination.resolve("pose.json"), poseTokens);
         filterFrameJson(clipRoot.resolve("anno").resolve("obstacle_3d.json"),
                 destination.resolve("anno").resolve("obstacle_3d.json"),
                 clipRoot, destination, selectedTokens, true);
+    }
+
+    private String resolveOriginalPackageName(String datasetName, List<Long> frameIds) {
+        var frames = dataInfoUseCase.listByIds(frameIds, false);
+        var sceneIds = frames.stream().map(DataInfoBO::getParentId)
+                .filter(Objects::nonNull).filter(id -> id != 0).distinct().collect(Collectors.toList());
+        String originalName = datasetName;
+        if (sceneIds.size() == 1) {
+            var scenes = dataInfoUseCase.listByIds(sceneIds, false);
+            if (!scenes.isEmpty()) originalName = scenes.get(0).getName();
+        }
+        var normalized = Objects.toString(originalName, "dataset");
+        var slash = normalized.lastIndexOf('/');
+        return safeName(slash >= 0 ? normalized.substring(slash + 1) : normalized);
+    }
+
+    private Set<String> filterMetaJson(Path source, Path destination, Set<String> selectedLidarTokens)
+            throws IOException {
+        if (!Files.isRegularFile(source)) return new HashSet<>(selectedLidarTokens);
+        var root = objectMapper.readTree(source.toFile());
+        if (!(root instanceof ObjectNode) || !root.path("key_frame").isObject()) {
+            throw new IOException("invalid meta.json structure: " + source);
+        }
+        var keyFrame = (ObjectNode) root.path("key_frame");
+        JsonNode lidarFrames = keyFrame.get("LIDAR_TOP");
+        if (lidarFrames == null || !lidarFrames.isArray()) {
+            throw new IOException("meta.json has no key_frame.LIDAR_TOP array: " + source);
+        }
+
+        var selectedIndices = new ArrayList<Integer>();
+        for (var index = 0; index < lidarFrames.size(); index++) {
+            var token = frameToken(lidarFrames.get(index).asText());
+            if (token != null && selectedLidarTokens.contains(token)) selectedIndices.add(index);
+        }
+        if (selectedIndices.isEmpty()) {
+            throw new IOException("selected frame indices were not found in meta.json: " + source);
+        }
+
+        ObjectNode output = ((ObjectNode) root).deepCopy();
+        ObjectNode outputKeyFrame = (ObjectNode) output.path("key_frame");
+        var poseTokens = new HashSet<String>();
+        var sensors = keyFrame.fields();
+        while (sensors.hasNext()) {
+            var sensor = sensors.next();
+            if (!sensor.getValue().isArray()) continue;
+            ArrayNode filtered = objectMapper.createArrayNode();
+            for (var index : selectedIndices) {
+                if (index >= sensor.getValue().size()) {
+                    throw new IOException("meta.json sensor index mismatch for " + sensor.getKey() + ": " + source);
+                }
+                var value = sensor.getValue().get(index);
+                filtered.add(value.deepCopy());
+                if (value.isTextual()) {
+                    var token = frameToken(value.asText());
+                    if (token != null) poseTokens.add(token);
+                }
+            }
+            outputKeyFrame.set(sensor.getKey(), filtered);
+        }
+        if (output.has("duration")) output.put("duration", selectedIndices.size());
+        Files.createDirectories(destination.getParent());
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(destination.toFile(), output);
+        return poseTokens;
+    }
+
+    private void filterPoseJson(Path source, Path destination, Set<String> selectedPoseTokens) throws IOException {
+        if (!Files.isRegularFile(source)) return;
+        var root = objectMapper.readTree(source.toFile());
+        if (!root.isObject()) throw new IOException("invalid pose.json structure: " + source);
+        var output = objectMapper.createObjectNode();
+        var fields = root.fields();
+        while (fields.hasNext()) {
+            var field = fields.next();
+            if (selectedPoseTokens.contains(field.getKey())) {
+                output.set(field.getKey(), field.getValue());
+            }
+        }
+        if (output.isEmpty()) {
+            throw new IOException("selected frame poses were not found in pose.json: " + source);
+        }
+        Files.createDirectories(destination.getParent());
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(destination.toFile(), output);
     }
 
     private Path findClipRoot(List<DataInfoBO> frames) {
