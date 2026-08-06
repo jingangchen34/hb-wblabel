@@ -115,10 +115,9 @@ public class RawFrameExportUseCase {
         var record = exportRecordDAO.getOne(Wrappers.lambdaQuery(ExportRecord.class)
                 .eq(ExportRecord::getSerialNumber, serialNumber));
         var workDir = Path.of(tempPath, "raw-selection-" + serialNumber);
-        var datasetDir = workDir.resolve(safeName(datasetName));
         var zipPath = Path.of(workDir.toString() + ".zip");
         try {
-            Files.createDirectories(datasetDir);
+            Files.createDirectories(workDir);
             var frames = dataInfoUseCase.listByIds(frameIds, false);
             var sceneIds = frames.stream().map(DataInfoBO::getParentId)
                     .filter(Objects::nonNull).filter(id -> id != 0).collect(Collectors.toSet());
@@ -129,11 +128,12 @@ public class RawFrameExportUseCase {
 
             var byScene = frames.stream().collect(Collectors.groupingBy(DataInfoBO::getParentId,
                     LinkedHashMap::new, Collectors.toList()));
+            var multipleScenes = byScene.size() > 1;
             var completed = 0;
             for (var entry : byScene.entrySet()) {
                 var scene = scenes.get(entry.getKey());
                 var sceneName = scene == null ? "scene-" + entry.getKey() : scene.getName();
-                var sceneDir = safeResolve(datasetDir, safeName(sceneName));
+                var sceneDir = multipleScenes ? safeResolve(workDir, safeName(sceneName)) : workDir;
                 var sceneFrames = entry.getValue();
                 sceneFrames.sort(Comparator.comparing(frame -> Objects.toString(frame.getOrderName(), frame.getName())));
                 exportScene(sceneDir, sceneFrames);
@@ -149,9 +149,9 @@ public class RawFrameExportUseCase {
                 updateProgress(record, completed, frames.size());
             }
             objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValue(datasetDir.resolve("frame_tags.json").toFile(), manifest);
+                    .writeValue(workDir.resolve("frame_tags.json").toFile(), manifest);
 
-            var zipFile = ZipUtil.zip(workDir.toString(), zipPath.toString(), true);
+            var zipFile = ZipUtil.zip(workDir.toString(), zipPath.toString(), false);
             var objectPath = String.format("%s/%s/%s", record.getCreatedBy(),
                     TemporalAccessorUtil.format(OffsetDateTime.now(), DatePattern.PURE_DATETIME_PATTERN),
                     zipFile.getName());
