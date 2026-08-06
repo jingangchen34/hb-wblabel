@@ -1,9 +1,7 @@
 package ai.basic.x1.usecase;
 
-import ai.basic.x1.adapter.port.dao.DataSceneAttributeDAO;
 import ai.basic.x1.adapter.port.dao.DatasetDAO;
 import ai.basic.x1.adapter.port.dao.ExportRecordDAO;
-import ai.basic.x1.adapter.port.dao.mybatis.model.DataSceneAttribute;
 import ai.basic.x1.adapter.port.dao.mybatis.model.ExportRecord;
 import ai.basic.x1.adapter.port.minio.MinioProp;
 import ai.basic.x1.adapter.port.minio.MinioService;
@@ -40,12 +38,9 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -68,8 +63,6 @@ public class RawFrameExportUseCase {
     private DataInfoUseCase dataInfoUseCase;
     @Autowired
     private DatasetDAO datasetDAO;
-    @Autowired
-    private DataSceneAttributeDAO dataSceneAttributeDAO;
     @Autowired
     private ExportRecordDAO exportRecordDAO;
     @Autowired
@@ -126,8 +119,6 @@ public class RawFrameExportUseCase {
                     .filter(Objects::nonNull).filter(id -> id != 0).collect(Collectors.toSet());
             var scenes = dataInfoUseCase.listByIds(new ArrayList<>(sceneIds), false).stream()
                     .collect(Collectors.toMap(DataInfoBO::getId, scene -> scene));
-            var tags = loadFrameTags(frameIds);
-            var manifest = new ArrayList<Map<String, Object>>();
 
             var byScene = frames.stream().collect(Collectors.groupingBy(DataInfoBO::getParentId,
                     LinkedHashMap::new, Collectors.toList()));
@@ -140,19 +131,9 @@ public class RawFrameExportUseCase {
                 var sceneFrames = entry.getValue();
                 sceneFrames.sort(Comparator.comparing(frame -> Objects.toString(frame.getOrderName(), frame.getName())));
                 exportScene(sceneDir, sceneFrames);
-                for (var frame : sceneFrames) {
-                    var item = new LinkedHashMap<String, Object>();
-                    item.put("dataId", frame.getId());
-                    item.put("scene", sceneName);
-                    item.put("frame", frame.getName());
-                    item.put("tag", tags.get(frame.getId()));
-                    manifest.add(item);
-                    completed++;
-                }
+                completed += sceneFrames.size();
                 updateProgress(record, completed, frames.size());
             }
-            objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValue(packageDir.resolve("frame_tags.json").toFile(), manifest);
 
             var zipFile = ZipUtil.zip(workDir.toString(), zipPath.toString(), false);
             var objectPath = String.format("%s/%s/%s", record.getCreatedBy(),
@@ -399,14 +380,6 @@ public class RawFrameExportUseCase {
         }
         var children = node.elements();
         while (children.hasNext()) copyReferencedFiles(children.next(), clipRoot, outputRoot);
-    }
-
-    private Map<Long, String> loadFrameTags(List<Long> frameIds) {
-        return dataSceneAttributeDAO.list(Wrappers.lambdaQuery(DataSceneAttribute.class)
-                        .in(DataSceneAttribute::getDataId, frameIds)
-                        .eq(DataSceneAttribute::getCategory, DataSceneAttributeUseCase.FRAME_TAG_CATEGORY))
-                .stream().collect(Collectors.toMap(DataSceneAttribute::getDataId,
-                        DataSceneAttribute::getSubType, (first, second) -> first));
     }
 
     private void updateProgress(ExportRecord record, int generated, int total) {
