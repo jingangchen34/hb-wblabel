@@ -115,9 +115,12 @@ public class RawFrameExportUseCase {
         var record = exportRecordDAO.getOne(Wrappers.lambdaQuery(ExportRecord.class)
                 .eq(ExportRecord::getSerialNumber, serialNumber));
         var workDir = Path.of(tempPath, "raw-selection-" + serialNumber);
+        var packageName = fileName.toLowerCase().endsWith(".zip")
+                ? fileName.substring(0, fileName.length() - 4) : fileName;
+        var packageDir = workDir.resolve(safeName(packageName));
         var zipPath = Path.of(workDir.toString() + ".zip");
         try {
-            Files.createDirectories(workDir);
+            Files.createDirectories(packageDir);
             var frames = dataInfoUseCase.listByIds(frameIds, false);
             var sceneIds = frames.stream().map(DataInfoBO::getParentId)
                     .filter(Objects::nonNull).filter(id -> id != 0).collect(Collectors.toSet());
@@ -133,7 +136,7 @@ public class RawFrameExportUseCase {
             for (var entry : byScene.entrySet()) {
                 var scene = scenes.get(entry.getKey());
                 var sceneName = scene == null ? "scene-" + entry.getKey() : scene.getName();
-                var sceneDir = multipleScenes ? safeResolve(workDir, safeName(sceneName)) : workDir;
+                var sceneDir = multipleScenes ? safeResolve(packageDir, safeName(sceneName)) : packageDir;
                 var sceneFrames = entry.getValue();
                 sceneFrames.sort(Comparator.comparing(frame -> Objects.toString(frame.getOrderName(), frame.getName())));
                 exportScene(sceneDir, sceneFrames);
@@ -149,7 +152,7 @@ public class RawFrameExportUseCase {
                 updateProgress(record, completed, frames.size());
             }
             objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValue(workDir.resolve("frame_tags.json").toFile(), manifest);
+                    .writeValue(packageDir.resolve("frame_tags.json").toFile(), manifest);
 
             var zipFile = ZipUtil.zip(workDir.toString(), zipPath.toString(), false);
             var objectPath = String.format("%s/%s/%s", record.getCreatedBy(),
