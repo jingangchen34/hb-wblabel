@@ -81,7 +81,7 @@ public class RawFrameExportUseCase {
     @Value("${external.data.root:/external-data}")
     private String externalDataRoot;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = SourceJsonWriter.mapper();
 
     public Long export(Long datasetId, List<Long> frameIds) {
         if (CollUtil.isEmpty(frameIds)) {
@@ -258,7 +258,7 @@ public class RawFrameExportUseCase {
         }
         if (output.has("duration")) output.put("duration", selectedIndices.size());
         Files.createDirectories(destination.getParent());
-        objectMapper.writerWithDefaultPrettyPrinter().writeValue(destination.toFile(), output);
+        SourceJsonWriter.write(destination, output);
         return poseTokens;
     }
 
@@ -278,7 +278,7 @@ public class RawFrameExportUseCase {
             throw new IOException("selected frame poses were not found in pose.json: " + source);
         }
         Files.createDirectories(destination.getParent());
-        objectMapper.writerWithDefaultPrettyPrinter().writeValue(destination.toFile(), output);
+        SourceJsonWriter.write(destination, output);
     }
 
     private Path findClipRoot(List<DataInfoBO> frames) {
@@ -354,7 +354,7 @@ public class RawFrameExportUseCase {
             if (copyReferencedFiles) copyReferencedFiles(value, clipRoot, outputRoot);
         }
         Files.createDirectories(destination.getParent());
-        objectMapper.writerWithDefaultPrettyPrinter().writeValue(destination.toFile(), output);
+        SourceJsonWriter.write(destination, output);
     }
 
     private boolean isFrameEntry(String key, JsonNode value) {
