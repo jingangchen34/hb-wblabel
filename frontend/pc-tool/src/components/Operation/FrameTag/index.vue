@@ -9,6 +9,7 @@
                 :disabled="state.loading || state.saving"
                 @click="selectTag(item.value)"
             >
+                <span class="shortcut-key">{{ item.key }}</span>
                 {{ item.label }}
             </button>
         </div>
@@ -47,10 +48,10 @@
     import * as api from '../../../api';
     import type { FrameTag, IFrameTagCounts } from '../../../api/common';
 
-    const tagOptions: Array<{ value: FrameTag; label: string }> = [
-        { value: 'splash', label: '水花' },
-        { value: 'rut', label: '车辙' },
-        { value: 'dust', label: '灰尘' },
+    const tagOptions: Array<{ value: FrameTag; label: string; key: string }> = [
+        { value: 'splash', label: '水花', key: '1' },
+        { value: 'rut', label: '车辙', key: '2' },
+        { value: 'dust', label: '灰尘', key: '3' },
     ];
 
     const editor = useInjectEditor();
@@ -73,15 +74,30 @@
     const currentSceneId = computed(() => editor.bsState.seriesFrameId || '');
 
     onMounted(async () => {
+        window.addEventListener('keydown', handleTagShortcut, true);
         await Promise.all([loadTag(), loadCounts()]);
     });
-    onBeforeUnmount(() => window.clearTimeout(pollTimer));
+    onBeforeUnmount(() => {
+        window.removeEventListener('keydown', handleTagShortcut, true);
+        window.clearTimeout(pollTimer);
+    });
     watch(currentDataId, loadTag);
     watch(currentSceneId, loadCounts);
     watch(() => state.scope, loadCounts);
 
     function tagLabel(tag: FrameTag) {
         return tagOptions.find((item) => item.value === tag)?.label || tag;
+    }
+
+    function handleTagShortcut(event: KeyboardEvent) {
+        if (!isViewMode.value || event.repeat || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName || '')) return;
+        const shortcut = tagOptions.find((item) => item.key === event.key);
+        if (!shortcut || state.loading || state.saving) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void selectTag(shortcut.value);
     }
 
     async function loadTag() {
@@ -205,6 +221,18 @@
     }
     .tag-button {
         padding: 7px 4px;
+    }
+    .shortcut-key {
+        display: inline-flex;
+        width: 18px;
+        height: 18px;
+        align-items: center;
+        justify-content: center;
+        margin-right: 3px;
+        border: 1px solid #626671;
+        border-radius: 3px;
+        color: #c9ccd4;
+        font-size: 11px;
     }
     .tag-button.active {
         border-color: #2f80ed;
