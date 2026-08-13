@@ -243,9 +243,11 @@ public class RawFrameExportUseCase {
             var sensor = sensors.next();
             if (!sensor.getValue().isArray()) continue;
             ArrayNode filtered = objectMapper.createArrayNode();
+            var missingCount = 0;
             for (var index : selectedIndices) {
                 if (index >= sensor.getValue().size()) {
-                    throw new IOException("meta.json sensor index mismatch for " + sensor.getKey() + ": " + source);
+                    missingCount++;
+                    continue;
                 }
                 var value = sensor.getValue().get(index);
                 filtered.add(value.deepCopy());
@@ -253,6 +255,10 @@ public class RawFrameExportUseCase {
                     var token = frameToken(value.asText());
                     if (token != null) poseTokens.add(token);
                 }
+            }
+            if (missingCount > 0) {
+                log.warn("Skipped {} missing {} frame indices while exporting {}",
+                        missingCount, sensor.getKey(), source);
             }
             outputKeyFrame.set(sensor.getKey(), filtered);
         }
