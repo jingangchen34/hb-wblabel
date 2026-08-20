@@ -1,4 +1,5 @@
 import { FileLoader, Loader } from 'three';
+import { buildPointLabelColors } from '../occ/pointLabelPalette';
 
 type Callback = (args?: any) => void;
 
@@ -15,46 +16,6 @@ export interface LabelBinOptions {
     labelUrl?: string;
     pointCache?: boolean;
     colorMap?: Record<number, string>;
-}
-
-const DEFAULT_LABEL_COLORS: Record<number, string> = {
-    0: '#ffffff',
-    1: '#808080',
-    2: '#00ff00',
-    3: '#0000ff',
-    4: '#ffff00',
-    5: '#00ffff',
-    6: '#ff0000',
-};
-
-function hexToRgb(hex: string): [number, number, number] {
-    const normalized = hex.replace('#', '');
-    const value = Number.parseInt(normalized.length === 3
-        ? normalized.split('').map((item) => item + item).join('')
-        : normalized, 16);
-    return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-}
-
-function buildRgbMap(colorMap: Record<number, string>) {
-    const rgbMap: Record<number, [number, number, number]> = {};
-    Object.keys(colorMap).forEach((label) => {
-        rgbMap[+label] = hexToRgb(colorMap[+label]);
-    });
-    return rgbMap;
-}
-
-function fillColor(
-    color: Uint8Array,
-    pointIndex: number,
-    label: number,
-    rgbMap: Record<number, [number, number, number]>,
-    fallback: [number, number, number],
-) {
-    const rgb = rgbMap[label] || fallback;
-    const offset = pointIndex * 3;
-    color[offset] = rgb[0];
-    color[offset + 1] = rgb[1];
-    color[offset + 2] = rgb[2];
 }
 
 function resolvePointDim(binData: ArrayBuffer, labels: Uint8Array, optionDim?: number | number[]) {
@@ -122,19 +83,15 @@ export default class LabelBinLoader extends Loader {
         const source = new Float32Array(binData);
         const position = new Float32Array(pointCount * 3);
         const intensity = new Float32Array(pointCount);
-        const color = new Uint8Array(pointCount * 3);
         const pointLabels = labels.length > 0 ? labels : new Uint8Array(pointCount);
-        const mergedColorMap = { ...DEFAULT_LABEL_COLORS, ...(options.colorMap || {}) };
-        const rgbMap = buildRgbMap(mergedColorMap);
-        const fallback = hexToRgb('#ffffff');
         for (let index = 0; index < pointCount; index++) {
             const sourceOffset = index * pointDim;
             position[index * 3] = source[sourceOffset];
             position[index * 3 + 1] = source[sourceOffset + 1];
             position[index * 3 + 2] = source[sourceOffset + 2];
             intensity[index] = pointDim > 3 ? source[sourceOffset + 3] : 0;
-            fillColor(color, index, pointLabels[index], rgbMap, fallback);
         }
+        const color = buildPointLabelColors(pointLabels, options.colorMap);
 
         return {
             position,
@@ -165,18 +122,9 @@ export default class LabelBinLoader extends Loader {
 
         const position = new Float32Array(cacheData, headerBytes, pointCount * 3);
         const pointLabels = new Uint8Array(cacheData, labelOffset, pointCount);
-        let color: Uint8Array;
-        if (version === 2) {
-            color = new Uint8Array(cacheData, colorOffset, pointCount * 3);
-        } else {
-            color = new Uint8Array(pointCount * 3);
-            const mergedColorMap = { ...DEFAULT_LABEL_COLORS, ...(options.colorMap || {}) };
-            const rgbMap = buildRgbMap(mergedColorMap);
-            const fallback = hexToRgb('#ffffff');
-            for (let index = 0; index < pointCount; index++) {
-                fillColor(color, index, pointLabels[index], rgbMap, fallback);
-            }
-        }
+        // Rebuild colors from raw labels so old version-2 caches cannot retain
+        // the previous white fallback for detailed semantic labels.
+        const color = buildPointLabelColors(pointLabels, options.colorMap);
 
         console.log(
             `[pc-perf] step=parsePointCache version=${version} points=${pointCount} ms=${Math.round(

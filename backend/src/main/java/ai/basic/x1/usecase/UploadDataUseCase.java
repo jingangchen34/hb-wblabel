@@ -816,6 +816,15 @@ public class UploadDataUseCase {
     }
 
     private void putOccLabelRgb(ByteBuffer output, int label) {
+        if (label >= 20 && label <= 23) {
+            label = 2;
+        } else if (label >= 30 && label <= 33) {
+            label = 3;
+        } else if (label >= 40 && label <= 41) {
+            label = 4;
+        } else if (label >= 50 && label <= 53) {
+            label = 5;
+        }
         switch (label) {
             case 1:
                 output.put((byte) 0x80).put((byte) 0x80).put((byte) 0x80);
