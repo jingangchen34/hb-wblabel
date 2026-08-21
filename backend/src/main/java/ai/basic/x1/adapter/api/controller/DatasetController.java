@@ -81,7 +81,6 @@ public class DatasetController extends BaseDatasetController {
         }
         var datasetIds = datasetBOList.stream().map(datasetBO -> datasetBO.getId()).collect(Collectors.toList());
         var datasetStatisticsMap = dataInfoUsecase.getDatasetStatisticsByDatasetIds(datasetIds);
-        dataInfoUsecase.setDatasetSixData(datasetBOList);
         return datasetBOPage.convert(datasetBO -> {
             var datasetDTO = DefaultConverter.convert(datasetBO, DatasetDTO.class);
             var datasetStatisticsBO = datasetStatisticsMap.get(datasetBO.getId());

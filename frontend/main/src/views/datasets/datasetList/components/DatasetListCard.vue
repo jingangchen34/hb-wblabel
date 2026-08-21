@@ -10,7 +10,7 @@
         }
       "
     >
-      <template v-if="data.datas === null">
+      <template v-if="!data.datas || data.datas.length === 0">
         <div style="width: 100%">
           <img
             style="width: 100%"
