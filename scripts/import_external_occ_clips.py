@@ -390,6 +390,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
         scene_var = vargen.scene()
         calib = clip_dir / "calib.json"
         pose = clip_dir / "pose.json"
+        coordinate_conversion = clip_dir / "coordinate_conversion.json"
         obstacle = find_obstacle_file(clip_dir)
         skip_obstacle_annotations = args.skip_obstacle_annotations or (
             args.conch_data_layout and is_new_clip_path(clip_dir, root)
@@ -463,6 +464,17 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
                 pose_var = vargen.file()
                 lines.extend(insert_file_sql(pose, root, args.bucket_name, args.user_id, pose_var))
                 content_nodes.append(file_node("pose.json", pose_var))
+
+            if coordinate_conversion.is_file():
+                coordinate_conversion_var = vargen.file()
+                lines.extend(insert_file_sql(
+                    coordinate_conversion,
+                    root,
+                    args.bucket_name,
+                    args.user_id,
+                    coordinate_conversion_var,
+                ))
+                content_nodes.append(file_node("coordinate_conversion.json", coordinate_conversion_var))
 
             if obstacle:
                 obstacle_var = vargen.file()

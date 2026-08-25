@@ -367,6 +367,7 @@ export interface IFrame {
     pointCacheUrl?: string;
     savedPointLabels?: Uint8Array;
     poseUrl?: string;
+    poseMetadataUrl?: string;
     obstacleUrl?: string;
     binPointDim?: number | number[];
     labelColorMap?: Record<number, string>;
@@ -440,6 +441,7 @@ export interface IDataResource {
     pointCacheUrl?: string;
     savedPointLabels?: Uint8Array;
     poseUrl?: string;
+    poseMetadataUrl?: string;
     obstacleUrl?: string;
     binPointDim?: number | number[];
     labelColorMap?: Record<number, string>;

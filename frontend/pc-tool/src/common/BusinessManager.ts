@@ -37,8 +37,9 @@ export default class BusinessManager extends BaseBusinessManager {
         }
         let poseConfig = fileConfig.find((e) => /^pose\.json$/i.test(e.name));
         let obstacleConfig = fileConfig.find((e) => /^obstacle_3d\.json$/i.test(e.name));
+        let poseMetadataConfig = fileConfig.find((e) => /^coordinate_conversion\.json$/i.test(e.name));
         let cameraConfig = fileConfig.find((e) =>
-            ![poseConfig?.url, obstacleConfig?.url].includes(e.url) &&
+            ![poseConfig?.url, obstacleConfig?.url, poseMetadataConfig?.url].includes(e.url) &&
             (regConfig.test(e.dirName) || regConfig.test(e.name) || /\.json$/i.test(e.name)),
         ) as IFileConfig;
 
@@ -62,6 +63,7 @@ export default class BusinessManager extends BaseBusinessManager {
             pointCacheUrl: info.pointCacheUrl,
             savedPointLabels,
             poseUrl: poseConfig?.url,
+            poseMetadataUrl: poseMetadataConfig?.url,
             obstacleUrl: obstacleConfig?.url,
             binPointDim: lidarFiles.find((item) => item.pointDim)?.pointDim || [6, 7, 4],
             pointsData: {},

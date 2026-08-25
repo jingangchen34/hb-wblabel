@@ -146,12 +146,18 @@ export default class MultiFrameMergeManager {
                 throw new Error('pose.json not found in current scene files');
             }
 
-            const [poseRoot, obstacleRoot] = await Promise.all([
+            const [poseRoot, obstacleRoot, poseMetadataRoot] = await Promise.all([
                 api.getUrl(metaConfig.poseUrl),
                 metaConfig.obstacleUrl ? api.getUrl(metaConfig.obstacleUrl).catch(() => undefined) : undefined,
+                metaConfig.poseMetadataUrl ? api.getUrl(metaConfig.poseMetadataUrl).catch(() => undefined) : undefined,
             ]);
 
-            this.poseQuaternionOrder = this.detectPoseQuaternionOrder(poseRoot, obstacleRoot, configs);
+            this.poseQuaternionOrder = this.detectPoseQuaternionOrder(
+                poseRoot,
+                obstacleRoot,
+                configs,
+                poseMetadataRoot,
+            );
             this.savePointDisplayConfig();
             const mergedGlobal = this.mergePointData(frames, configs, poseRoot, obstacleRoot, options.removeBoxPoints);
             this.poseRoot = poseRoot;
@@ -535,8 +541,15 @@ export default class MultiFrameMergeManager {
             : new THREE.Quaternion(a, b, c, d).normalize();
     }
 
-    private detectPoseQuaternionOrder(poseRoot: any, obstacleRoot: any, configs: IDataResource[]): QuaternionOrder {
-        const explicit = this.findQuaternionOrderMarker(poseRoot) || this.findQuaternionOrderMarker(obstacleRoot);
+    private detectPoseQuaternionOrder(
+        poseRoot: any,
+        obstacleRoot: any,
+        configs: IDataResource[],
+        poseMetadataRoot?: any,
+    ): QuaternionOrder {
+        const explicit = this.findQuaternionOrderMarker(poseMetadataRoot) ||
+            this.findQuaternionOrderMarker(poseRoot) ||
+            this.findQuaternionOrderMarker(obstacleRoot);
         if (explicit) return explicit;
 
         const cameraCount = this.detectCameraCount(obstacleRoot, configs);
