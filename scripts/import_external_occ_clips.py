@@ -317,22 +317,6 @@ def clip_parent_dataset_name(clip_dir: Path, root: Path) -> str:
 
 
 def make_clip_display_name(clip_dir: Path, root: Path, dataset_name: str | None = None) -> str:
-    try:
-        relative_parts = clip_dir.resolve().relative_to(root.resolve()).parts
-    except ValueError:
-        relative_parts = ()
-
-    dataset_parts = tuple(part for part in Path(dataset_name or "").parts if part not in {"", "."})
-    if dataset_parts and relative_parts[: len(dataset_parts)] == dataset_parts:
-        scene_parts = list(relative_parts[len(dataset_parts) :])
-        if len(scene_parts) >= 3:
-            site_name = scene_parts[-3]
-            result_dir = scene_parts[-2]
-            if result_dir == f"{site_name}_qlc_result":
-                scene_parts.pop(-2)
-                scene_parts[-1] = f"{scene_parts[-1]}.clip"
-                return Path(*scene_parts).as_posix()
-
     parent_names = {args_safe_name(clip_dir.parent.name), args_safe_name(clip_parent_dataset_name(clip_dir, root))}
     if dataset_name and args_safe_name(dataset_name) in parent_names:
         return clip_dir.name
