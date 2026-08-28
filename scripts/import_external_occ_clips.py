@@ -95,6 +95,14 @@ def find_obstacle_file(clip_dir: Path) -> Path | None:
     return sorted(matches)[0] if matches else None
 
 
+def find_v2v_csv(clip_dir: Path) -> Path | None:
+    v2v_dir = clip_dir / "v2v"
+    if not v2v_dir.is_dir():
+        return None
+    matches = [p for p in v2v_dir.iterdir() if p.is_file() and p.name.lower() == "v2v.csv"]
+    return sorted(matches)[0] if matches else None
+
+
 def find_lidar_bins(clip_dir: Path) -> list[Path]:
     lidar_dir = clip_dir / "lidars"
     if not lidar_dir.is_dir():
@@ -392,6 +400,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
         pose = clip_dir / "pose.json"
         coordinate_conversion = clip_dir / "coordinate_conversion.json"
         obstacle = find_obstacle_file(clip_dir)
+        v2v_csv = find_v2v_csv(clip_dir)
         skip_obstacle_annotations = args.skip_obstacle_annotations or (
             args.conch_data_layout and is_new_clip_path(clip_dir, root)
         )
@@ -401,6 +410,9 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
         if not frame_sources:
             frame_sources = [(lidar, None) for lidar in lidar_bins]
         camera_dirs = find_occ_camera_dirs(clip_dir)
+        label_files = [
+            p for p in clip_dir.rglob("*") if p.is_file() and p.suffix.lower() in LABEL_EXTS
+        ]
 
         lines.extend([
             f"-- Scene: {clip_name}",
@@ -410,6 +422,12 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
             f"SET {scene_var}=LAST_INSERT_ID();",
             "",
         ])
+
+        v2v_var = None
+        if v2v_csv:
+            v2v_var = vargen.file()
+            lines.extend(insert_file_sql(v2v_csv, root, args.bucket_name, args.user_id, v2v_var))
+            lines.append("")
 
         for frame_idx, (lidar, frame_entry) in enumerate(frame_sources):
             frame_total += 1
@@ -433,7 +451,7 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
                 content_nodes.append(dir_node("point_cloud_cache", [file_node(cache.name, cache_var)]))
 
             label = find_matching_file(
-                [p for p in clip_dir.rglob("*") if p.is_file() and p.suffix.lower() in LABEL_EXTS],
+                label_files,
                 lidar,
                 frame_idx,
                 len(frame_sources),
@@ -480,6 +498,9 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
                 obstacle_var = vargen.file()
                 lines.extend(insert_file_sql(obstacle, root, args.bucket_name, args.user_id, obstacle_var))
                 content_nodes.append(file_node("obstacle_3d.json", obstacle_var))
+
+            if v2v_csv and v2v_var:
+                content_nodes.append(dir_node("v2v", [file_node(v2v_csv.name, v2v_var)]))
 
             content_expr = f"JSON_ARRAY({', '.join(content_nodes)})"
             lines.extend([

@@ -443,6 +443,7 @@ export interface IDataResource {
     poseUrl?: string;
     poseMetadataUrl?: string;
     obstacleUrl?: string;
+    v2vUrl?: string;
     binPointDim?: number | number[];
     labelColorMap?: Record<number, string>;
     pointsData: Record<PointAttr, PointAttrValue>;

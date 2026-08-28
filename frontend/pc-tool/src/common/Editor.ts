@@ -7,6 +7,7 @@ import { EVALUATION_GT_SOURCE_ID, EVALUATION_PRED_SOURCE_ID } from '../api/commo
 import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
 import MultiFrameMergeManager from './MultiFrameMergeManager';
+import V2vBoxManager from './V2vBoxManager';
 
 function isEvaluationPrediction(object: any) {
     return (
@@ -45,6 +46,7 @@ export default class Editor extends BaseEditor {
     businessManager: BusinessManager;
     dataManager: DataManager;
     multiFrameMergeManager: MultiFrameMergeManager;
+    v2vBoxManager: V2vBoxManager;
     bsState: IBSState = getDefault();
     private evaluationFrameObjectsLoading?: Promise<void>;
     private evaluationSavedFrameIds = new Set<string>();
@@ -62,6 +64,7 @@ export default class Editor extends BaseEditor {
         this.businessManager = new BusinessManager(this);
         this.dataManager = new DataManager(this);
         this.multiFrameMergeManager = new MultiFrameMergeManager(this);
+        this.v2vBoxManager = new V2vBoxManager(this);
     }
 
     getClassType(name: string | IUserData): IClassType | undefined {
@@ -91,6 +94,7 @@ export default class Editor extends BaseEditor {
         await super.loadFrame(index, showLoading, force);
         await this.ensureEvaluationFrameObjects();
         await this.multiFrameMergeManager.refreshDisplayForCurrentFrame();
+        await this.v2vBoxManager.refreshCurrentFrame();
     }
 
     private async ensureEvaluationFrameObjects() {
