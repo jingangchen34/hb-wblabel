@@ -119,20 +119,38 @@
       icon: 'ant-design:inbox-outlined',
       theme: 'theme-amber',
     },
+    pp_data: {
+      title: '\u6d77\u535a\u6570\u91c7 KITTI \u6570\u636e',
+      description: '\u6d77\u535a\u91c7\u96c6\u5e76\u6574\u7406\u4e3a KITTI \u683c\u5f0f\uff0c\u7528\u4e8e PointPillars \u8bad\u7ec3\u4e0e\u8bc4\u4f30',
+      badge: 'KITTI',
+      icon: 'ant-design:car-outlined',
+      theme: 'theme-blue',
+    },
     xinchi_data: {
-      title: '\u661f\u9a70\u91c7\u96c6\u6570\u636e',
-      description: '\u661f\u9a70\u91c7\u96c6\u6765\u6e90\uff0c\u6309\u76ee\u5f55\u5f52\u6863\u7ba1\u7406',
-      badge: '\u661f\u9a70',
+      title: '\u661f\u9a70\u539f\u59cb\u91c7\u96c6\u6570\u636e',
+      description: '\u661f\u9a70\u539f\u59cb\u91c7\u96c6\u6765\u6e90\uff0c\u4fdd\u7559\u539f\u59cb\u6570\u636e\u7ed3\u6784\u5f52\u6863',
+      badge: '\u539f\u59cb\u6570\u636e',
       icon: 'ant-design:deployment-unit-outlined',
       theme: 'theme-violet',
     },
+    test: {
+      title: '\u661f\u9a70\u8f6c\u6362\u6570\u636e',
+      description: '\u661f\u9a70\u6570\u636e\u5df2\u8f6c\u6362\u4e3a\u6d77\u535a\u6570\u636e\u683c\u5f0f\uff0c\u4fbf\u4e8e\u7edf\u4e00\u6d4f\u89c8\u4e0e\u8bc4\u4f30',
+      badge: '\u6d77\u535a\u683c\u5f0f',
+      icon: 'ant-design:swap-outlined',
+      theme: 'theme-green',
+    },
   };
 
-  const getDatasetPathParts = (datasetName: string) =>
-    datasetName
+  const standaloneSourceFolders = new Set(['test']);
+
+  const getDatasetPathParts = (datasetName: string) => {
+    const parts = datasetName
       .split('/')
       .map((part) => part.trim())
       .filter(Boolean);
+    return parts.length === 1 && standaloneSourceFolders.has(parts[0]) ? [parts[0], parts[0]] : parts;
+  };
 
   const startsWithCurrentPath = (parts: string[]) =>
     currentPath.value.every((part, index) => parts[index] === part);
@@ -475,6 +493,26 @@
     &.source-badge {
       color: #6d28d9;
       background: #f1ecff;
+    }
+  }
+
+  .theme-blue {
+    color: #2563eb;
+    background: #eff6ff;
+
+    &.source-badge {
+      color: #1d4ed8;
+      background: #dbeafe;
+    }
+  }
+
+  .theme-green {
+    color: #059669;
+    background: #ecfdf5;
+
+    &.source-badge {
+      color: #047857;
+      background: #d1fae5;
     }
   }
 
