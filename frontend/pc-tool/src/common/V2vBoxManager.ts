@@ -64,12 +64,14 @@ export function parseV2vCsv(text: string): V2vFrame[] {
         const row = Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
         const timestampNs = parseTimestamp(row.frame_timestamp_ns || row.box_timestamp_ns);
         if (timestampNs <= 0) return;
+        const height = Number(row.height_m);
+        const zOffset = Number.isFinite(height) ? height / 2 : 0;
         const corners = Array.from({ length: 8 }, (_, index) => {
             const point = index + 1;
             return new THREE.Vector3(
                 Number(row[`point${point}_x_m`]),
                 Number(row[`point${point}_y_m`]),
-                Number(row[`point${point}_z_m`]),
+                Number(row[`point${point}_z_m`]) + zOffset,
             );
         });
         if (corners.some((point) => !Number.isFinite(point.x + point.y + point.z))) return;
