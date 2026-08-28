@@ -3,7 +3,7 @@ import { IDataResource } from 'pc-editor';
 import * as api from '../api';
 import type Editor from './Editor';
 
-const MAX_TIMESTAMP_GAP_NS = 500_000_000n;
+const MAX_TIMESTAMP_GAP_NS = 500_000_000;
 const BOX_EDGES = [
     0, 1, 1, 2, 2, 3, 3, 0,
     4, 5, 5, 6, 6, 7, 7, 4,
@@ -12,7 +12,7 @@ const BOX_EDGES = [
 
 interface V2vBox {
     frameIndex: number;
-    timestampNs: bigint;
+    timestampNs: number;
     vehicleId: string;
     truckType: string;
     corners: THREE.Vector3[];
@@ -20,7 +20,7 @@ interface V2vBox {
 
 interface V2vFrame {
     frameIndex: number;
-    timestampNs: bigint;
+    timestampNs: number;
     boxes: V2vBox[];
 }
 
@@ -49,11 +49,8 @@ function parseCsvLine(line: string) {
 }
 
 function parseTimestamp(value: string | undefined) {
-    try {
-        return BigInt(value || '0');
-    } catch (_) {
-        return 0n;
-    }
+    const timestamp = Number(value || '0');
+    return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 export function parseV2vCsv(text: string): V2vFrame[] {
@@ -66,7 +63,7 @@ export function parseV2vCsv(text: string): V2vFrame[] {
         const values = parseCsvLine(line);
         const row = Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
         const timestampNs = parseTimestamp(row.frame_timestamp_ns || row.box_timestamp_ns);
-        if (timestampNs <= 0n) return;
+        if (timestampNs <= 0) return;
         const corners = Array.from({ length: 8 }, (_, index) => {
             const point = index + 1;
             return new THREE.Vector3(
@@ -77,7 +74,7 @@ export function parseV2vCsv(text: string): V2vFrame[] {
         });
         if (corners.some((point) => !Number.isFinite(point.x + point.y + point.z))) return;
         const frameIndex = Number.parseInt(row.frame_index || '-1', 10);
-        const key = timestampNs.toString();
+        const key = String(timestampNs);
         const frame = frames.get(key) || { frameIndex, timestampNs, boxes: [] };
         frame.boxes.push({
             frameIndex,
@@ -96,24 +93,20 @@ export function parseV2vCsv(text: string): V2vFrame[] {
 
 function timestampFromPointName(name?: string) {
     const match = String(name || '').match(/(\d{16,})/);
-    return match ? parseTimestamp(match[1]) : 0n;
+    return match ? parseTimestamp(match[1]) : 0;
 }
 
-function absBigInt(value: bigint) {
-    return value < 0n ? -value : value;
-}
-
-function findNearestFrame(frames: V2vFrame[], timestampNs: bigint, frameIndex: number) {
+function findNearestFrame(frames: V2vFrame[], timestampNs: number, frameIndex: number) {
     if (!frames.length) return undefined;
-    if (timestampNs <= 0n) {
+    if (timestampNs <= 0) {
         const frame = frames.find((item) => item.frameIndex === frameIndex);
-        return frame ? { frame, gap: 0n } : undefined;
+        return frame ? { frame, gap: 0 } : undefined;
     }
     let nearest = frames[0];
-    let gap = absBigInt(nearest.timestampNs - timestampNs);
+    let gap = Math.abs(nearest.timestampNs - timestampNs);
     for (let index = 1; index < frames.length; index += 1) {
         const candidate = frames[index];
-        const candidateGap = absBigInt(candidate.timestampNs - timestampNs);
+        const candidateGap = Math.abs(candidate.timestampNs - timestampNs);
         if (candidateGap < gap) {
             nearest = candidate;
             gap = candidateGap;
@@ -122,7 +115,7 @@ function findNearestFrame(frames: V2vFrame[], timestampNs: bigint, frameIndex: n
     return gap <= MAX_TIMESTAMP_GAP_NS ? { frame: nearest, gap } : undefined;
 }
 
-function createLabel(box: V2vBox, gapNs: bigint) {
+function createLabel(box: V2vBox, gapNs: number) {
     const canvas = document.createElement('canvas');
     canvas.width = 768;
     canvas.height = 96;
@@ -136,7 +129,7 @@ function createLabel(box: V2vBox, gapNs: bigint) {
     context.fillStyle = '#e6fbff';
     context.font = 'bold 34px sans-serif';
     context.fillText(
-        `V2V  ${box.vehicleId}  type=${box.truckType}  dt=${Number(gapNs / 1_000_000n)}ms`,
+        `V2V  ${box.vehicleId}  type=${box.truckType}  dt=${Math.round(gapNs / 1_000_000)}ms`,
         18,
         62,
     );
