@@ -290,6 +290,13 @@ export default class Editor extends BaseEditor {
                     sourceId: state.config.withoutTaskId,
                     sourceType: SourceType.DATA_FLOW,
                 });
+                if (this.bsState.query.preAnnotationId) {
+                    sources.push({
+                        name: 'Pre-annotation',
+                        sourceId: 'PRE_ANNOTATION',
+                        sourceType: SourceType.MODEL,
+                    });
+                }
                 frame.sources = sources;
             }
         }

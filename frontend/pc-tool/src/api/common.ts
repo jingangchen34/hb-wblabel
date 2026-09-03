@@ -18,6 +18,7 @@ import * as THREE from 'three';
 let { empty, queryStr, traverseClassification2Arr, traverseClass2Arr } = utils;
 export const EVALUATION_GT_SOURCE_ID = 'EVAL_GT';
 export const EVALUATION_PRED_SOURCE_ID = 'EVAL_PRED';
+export const PRE_ANNOTATION_SOURCE_ID = 'PRE_ANNOTATION';
 
 export interface ISeriesFrameInfo {
     id: string;
@@ -125,6 +126,40 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
         },
         meta: { isProjection: false },
     };
+}
+
+function normalizePreAnnotationObject(item: any, dataId: string, index: number): any {
+    const normalized = normalizeEvaluationObject(item, dataId, 'PRED', index);
+    return {
+        ...normalized,
+        source: item.source || 'PRE_ANNOTATION',
+        sourceId: PRE_ANNOTATION_SOURCE_ID,
+        sourceType: SourceType.MODEL,
+        color: item.source === 'V2V' ? '#22d3ee' : '#f59e0b',
+        trackName: `${item.source || 'AI'} ${normalized.trackName || normalized.classType || ''}`.trim(),
+    };
+}
+
+export async function getPreAnnotationFrames(preAnnotationId: string | number, dataIds: string[]) {
+    const args = queryStr({ dataIds });
+    const res: any = await get(`/api/preAnnotation/${preAnnotationId}/data?${args}`);
+    return res?.data || res || [];
+}
+
+export async function getPreAnnotationObjectsMap(preAnnotationId: string | number, dataIds: string[]) {
+    const frames = await getPreAnnotationFrames(preAnnotationId, dataIds);
+    return frames.reduce((map: Record<string, any[]>, frame: any) => {
+        const dataId = String(frame.dataId);
+        map[dataId] = (frame.predictions || []).map((item: any, index: number) =>
+            utils.translateToObject(normalizePreAnnotationObject(item, dataId, index)),
+        );
+        return map;
+    }, {});
+}
+
+export async function commitPreAnnotation(preAnnotationId: string | number, dataIds: string[]) {
+    const res: any = await post(`/api/preAnnotation/${preAnnotationId}/commit`, { dataIds });
+    return res?.data || res;
 }
 
 async function getEvaluationObjectsMap(evaluationId: string | number, dataIds: string[]) {

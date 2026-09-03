@@ -60,9 +60,14 @@ export default class BusinessManager extends BaseBusinessManager {
         const savedLabelStartedAt = performance.now();
         const savedPointLabels = await api.getSavedPointLabels(data.id).catch(() => undefined);
         logStep('getSavedPointLabel', savedLabelStartedAt);
+        let preAnnotationOcc: any;
+        if (this.editor.bsState.query.preAnnotationId) {
+            const frames = await api.getPreAnnotationFrames(this.editor.bsState.query.preAnnotationId, [String(data.id)]);
+            preAnnotationOcc = frames?.[0]?.occArtifact;
+        }
         let config: IDataResource = {
             pointsUrl: info.pointsUrl,
-            labelUrl: info.labelUrl,
+            labelUrl: savedPointLabels ? info.labelUrl : preAnnotationOcc?.labelUrl || info.labelUrl,
             pointCacheUrl: info.pointCacheUrl,
             savedPointLabels,
             poseUrl: poseConfig?.url,
@@ -101,6 +106,11 @@ export default class BusinessManager extends BaseBusinessManager {
             Array.isArray(frame) ? frame.map((e) => e.id) : frame.id,
             evaluationId,
         );
+        if (this.editor.bsState.query.preAnnotationId) {
+            const ids = Array.isArray(frame) ? frame.map((e) => String(e.id)) : [String(frame.id)];
+            const drafts = await api.getPreAnnotationObjectsMap(this.editor.bsState.query.preAnnotationId, ids);
+            ids.forEach((id) => { data.objectsMap[id] = [...(data.objectsMap[id] || []), ...(drafts[id] || [])]; });
+        }
         return data;
     }
 }

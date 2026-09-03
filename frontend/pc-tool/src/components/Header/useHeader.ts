@@ -58,6 +58,7 @@ export default function useHeader() {
     let isEvaluationReview = computed(
         () => bsState.query.humanReview === '1' && !!bsState.query.evaluationId,
     );
+    let isPreAnnotationReview = computed(() => !!bsState.query.preAnnotationId);
 
     let onIndexChange = _.debounce(() => {
         console.log('change', dataIndex.value);
@@ -131,6 +132,25 @@ export default function useHeader() {
 
     function onSaveAll() {
         editor.saveObject(editor.state.frames);
+    }
+
+    async function onCommitPreAnnotation() {
+        const approved = await editor.showConfirm({
+            title: '提交为真值',
+            subTitle: '将保存全部人工校验结果，并原子写回源 clip 的 obstacle_3d.json 与 OCC .label。是否继续？',
+            okText: '提交为真值',
+        }).then(() => true).catch(() => false);
+        if (!approved) return;
+        bsState.submitting = true;
+        try {
+            await editor.saveObject(editor.state.frames, true);
+            await api.commitPreAnnotation(bsState.query.preAnnotationId, editor.state.frames.map((frame) => frame.id));
+            editor.showMsg('success', '当前 clip 真值已写回源数据目录');
+        } catch (error: any) {
+            editor.handleErr(error, '提交真值失败');
+        } finally {
+            bsState.submitting = false;
+        }
     }
 
     function onMergeSelected() {
@@ -459,6 +479,7 @@ export default function useHeader() {
         iState,
         currentFrame,
         isEvaluationReview,
+        isPreAnnotationReview,
         blocking,
         dataIndex,
         removeBoxPoints,
@@ -473,6 +494,7 @@ export default function useHeader() {
         onIndexBlur,
         onSave,
         onSaveAll,
+        onCommitPreAnnotation,
         onMergeSelected,
         onMergeAll,
         onCancelMerge,

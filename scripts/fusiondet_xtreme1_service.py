@@ -153,12 +153,26 @@ def public_url(path: Path) -> str:
 
 
 def expected_paths(frame_out_dir: Path, token: str) -> dict[str, Path]:
-    return {
+    paths = {
         "det": frame_out_dir / "det" / f"{token}.json",
         "pcd": frame_out_dir / "pcd" / f"{token}.pcd",
         "occ": frame_out_dir / "occ" / f"{token}.npz",
         "png": frame_out_dir / f"{token}.png",
     }
+    # Some SANet configurations export editable point-wise OCC labels alongside
+    # dense .npz output. Expose it only when it really exists; consumers verify
+    # its byte count against the source point cloud before committing it.
+    label_candidates = [
+        frame_out_dir / "occ_labels" / "LIDAR_CAR" / f"{token}.label",
+        frame_out_dir / "occ_label" / "LIDAR_CAR" / f"{token}.label",
+        frame_out_dir / "occ" / f"{token}.label",
+    ]
+    label = next((path for path in label_candidates if path.exists()), None)
+    if label is None and frame_out_dir.exists():
+        label = next(iter(frame_out_dir.glob(f"**/{token}.label")), None)
+    if label is not None:
+        paths["label"] = label
+    return paths
 
 
 def frame_output_dir(clip_out_dir: Path, clip_root: Path, token: str) -> Path:

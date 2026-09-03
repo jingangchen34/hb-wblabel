@@ -203,6 +203,11 @@ public class CommonConfig implements WebMvcConfigurer {
     }
 
     @Bean
+    public PreAnnotationUseCase preAnnotationUseCase() {
+        return new PreAnnotationUseCase();
+    }
+
+    @Bean
     public UploadDataUseCase uploadDataUseCase() {
         return new UploadDataUseCase();
     }

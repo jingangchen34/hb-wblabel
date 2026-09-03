@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ai.basic.x1.adapter.port.dao.mybatis.mapper.PreAnnotationRecordMapper">
+    <resultMap id="BaseResultMap" type="ai.basic.x1.adapter.port.dao.mybatis.model.PreAnnotationRecord">
+        <id column="id" property="id" />
+        <result column="model_id" property="modelId" /><result column="dataset_id" property="datasetId" />
+        <result column="dataset_ids" property="datasetIds" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="dataset_name" property="datasetName" /><result column="name" property="name" />
+        <result column="source_mode" property="sourceMode" /><result column="status" property="status" />
+        <result column="data_count" property="dataCount" />
+        <result column="data_ids" property="dataIds" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="committed_data_ids" property="committedDataIds" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="config_path" property="configPath" /><result column="checkpoint_path" property="checkpointPath" />
+        <result column="source_point_dim" property="sourcePointDim" /><result column="model_input_dim" property="modelInputDim" />
+        <result column="iou_threshold" property="iouThreshold" />
+        <result column="predictions" property="predictions" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="occ_artifacts" property="occArtifacts" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="output_path" property="outputPath" /><result column="log_path" property="logPath" />
+        <result column="error_reason" property="errorReason" />
+        <result column="commit_summary" property="commitSummary" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler" />
+        <result column="created_at" property="createdAt" /><result column="updated_at" property="updatedAt" />
+    </resultMap>
+    <select id="selectListWithDataset" resultMap="BaseResultMap">
+        SELECT a.*, b.name AS dataset_name FROM pre_annotation_record a
+        INNER JOIN dataset b ON a.dataset_id=b.id AND b.is_deleted=0
+        ${ew.customSqlSegment("a")}
+    </select>
+</mapper>

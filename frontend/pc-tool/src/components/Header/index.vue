@@ -71,7 +71,7 @@
             </a-button>
             <a-button
                 class="basic-btn"
-                v-if="has(BsUIType.flowSave) && isEvaluationReview && state.frames.length > 1"
+                v-if="has(BsUIType.flowSave) && (isEvaluationReview || isPreAnnotationReview) && state.frames.length > 1"
                 :disabled="blocking"
                 size="large"
                 :loading="bsState.saving"
@@ -79,6 +79,17 @@
             >
                 <template #icon><SaveOutlined /></template>
                 <div class="title">Save All</div>
+            </a-button>
+            <a-button
+                class="basic-btn preannotation-commit"
+                v-if="has(BsUIType.flowSave) && isPreAnnotationReview && canEdit()"
+                :disabled="blocking"
+                :loading="bsState.submitting"
+                size="large"
+                @click="onCommitPreAnnotation"
+            >
+                <template #icon><SaveOutlined /></template>
+                <div class="title">提交为真值</div>
             </a-button>
             <!-- shortcut -->
             <a-button class="basic-btn" size="large" :disabled="blocking" @click="onHelp">
@@ -194,6 +205,7 @@
         blocking,
         currentFrame,
         isEvaluationReview,
+        isPreAnnotationReview,
         dataIndex,
         removeBoxPoints,
         selectedMergeCount,
@@ -206,6 +218,7 @@
         onIndexBlur,
         onSave,
         onSaveAll,
+        onCommitPreAnnotation,
         onMergeSelected,
         onMergeAll,
         onCancelMerge,

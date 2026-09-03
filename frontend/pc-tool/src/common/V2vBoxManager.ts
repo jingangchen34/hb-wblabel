@@ -182,6 +182,7 @@ export default class V2vBoxManager {
 
     async refreshCurrentFrame() {
         this.clear();
+        if (this.editor.bsState.query.preAnnotationId) return;
         const currentFrame = this.editor.getCurrentFrame();
         if (!currentFrame) return;
         const frameId = currentFrame.id;
