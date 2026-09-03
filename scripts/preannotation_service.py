@@ -133,15 +133,15 @@ def box_from_v2v(row: dict[str, str], data_id: int, index: int) -> dict[str, Any
     try:
         pts = [(float(row[f"point{i}_x_m"]), float(row[f"point{i}_y_m"]), float(row[f"point{i}_z_m"])) for i in range(1, 9)]
         height = float(row.get("height_m") or (max(p[2] for p in pts)-min(p[2] for p in pts)))
+        center = [float(row["center_x_m"]), float(row["center_y_m"]), float(row["center_z_m"])]
+        length = float(row["length_m"])
+        width = float(row["width_m"])
+        heading = float(row["heading_rad"])
     except (ValueError, KeyError): return None
-    center = [sum(p[i] for p in pts)/8 for i in range(3)]
     center[2] += height / 2.0
-    def dist(a,b): return math.hypot(a[0]-b[0], a[1]-b[1])
-    dx, dy = dist(pts[0],pts[1]), dist(pts[1],pts[2])
-    yaw = math.atan2(pts[1][1]-pts[0][1], pts[1][0]-pts[0][0])
     return {"id": f"V2V-{data_id}-{index}", "label": row.get("truck_type") or "Truck", "confidence": 1.0,
-            "x": center[0], "y": center[1], "z": center[2], "dx": dx, "dy": dy, "dz": height,
-            "rotX": 0.0, "rotY": 0.0, "rotZ": yaw, "source": "V2V",
+            "x": center[0], "y": center[1], "z": center[2], "dx": length, "dy": width, "dz": height,
+            "rotX": 0.0, "rotY": 0.0, "rotZ": heading, "source": "V2V",
             "vehicleId": row.get("vehicle_id"), "v2vTimestampNs": int(row.get("frame_timestamp_ns") or row.get("box_timestamp_ns") or 0)}
 
 
