@@ -69,7 +69,7 @@ const pagination = computed(()=>({current:pageNo.value,pageSize:pageSize.value,t
 async function load(){ loading.value=true; try { const r=await getPreAnnotationPageApi({pageNo:pageNo.value,pageSize:pageSize.value}); records.value=r?.list||[]; total.value=r?.total||0; } finally { loading.value=false; } }
 function onPage(p:any){ pageNo.value=p.current; pageSize.value=p.pageSize; load(); }
 async function loadOptions(){
-  datasets.value = await getAllDataset({datasetTypes:[datasetTypeEnum.LIDAR_FUSION,datasetTypeEnum.LIDAR_BASIC,datasetTypeEnum.LIDAR].join(',')}) || [];
+  datasets.value = await getAllDataset({datasetTypes:[datasetTypeEnum.LIDAR_FUSION,datasetTypeEnum.LIDAR_BASIC].join(',')}) || [];
   const response:any = await getModelPageApi({pageNo:1,pageSize:100,datasetType:datasetTypeEnum.LIDAR_FUSION}); models.value=Array.isArray(response)?response:(response?.list||[]);
 }
 async function create(){
