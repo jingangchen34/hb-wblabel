@@ -63,7 +63,7 @@ const columns:any[] = [
   { title:'进度', width:110, customRender:({record}:any)=>`${record.committedDataIds?.length || 0}/${record.dataCount || 0}` },
   { title:'状态', dataIndex:'status', width:220, customRender:({text,record}:any)=>h(Space,{},()=>[
       h(Tag,{color:colors[text]},()=>text),
-      text==='FAILURE' ? h(Button,{size:'small',danger:true,onClick:()=>remove(record)},()=> '删除失败任务') : null,
+      text==='FAILURE' ? h(Button,{size:'small',danger:true,onClick:remove.bind(null,record)},()=> '删除失败任务') : null,
     ]) },
   { title:'失败原因', dataIndex:'errorReason', width:260, ellipsis:true },
   { title:'操作', key:'actions', width:190, fixed:'right' },
