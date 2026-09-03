@@ -2,15 +2,18 @@ package ai.basic.x1.usecase;
 
 import ai.basic.x1.adapter.dto.PreAnnotationFrameDTO;
 import ai.basic.x1.adapter.port.dao.DataInfoDAO;
+import ai.basic.x1.adapter.port.dao.DatasetClassDAO;
 import ai.basic.x1.adapter.port.dao.ModelDAO;
 import ai.basic.x1.adapter.port.dao.PreAnnotationRecordDAO;
 import ai.basic.x1.adapter.port.dao.mybatis.extension.ExtendLambdaQueryWrapper;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
+import ai.basic.x1.adapter.port.dao.mybatis.model.DatasetClass;
 import ai.basic.x1.adapter.port.dao.mybatis.model.PreAnnotationRecord;
 import ai.basic.x1.entity.PreAnnotationCreateBO;
 import ai.basic.x1.entity.enums.ItemTypeEnum;
 import ai.basic.x1.entity.enums.PreAnnotationSourceEnum;
 import ai.basic.x1.entity.enums.PreAnnotationStatusEnum;
+import ai.basic.x1.entity.enums.ToolTypeEnum;
 import ai.basic.x1.usecase.exception.UsecaseCode;
 import ai.basic.x1.usecase.exception.UsecaseException;
 import ai.basic.x1.util.DefaultConverter;
@@ -27,6 +30,7 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -37,6 +41,7 @@ public class PreAnnotationUseCase {
     private static final ExecutorService EXECUTOR = ThreadUtil.newExecutor(1);
     @Autowired private PreAnnotationRecordDAO recordDAO;
     @Autowired private DataInfoDAO dataInfoDAO;
+    @Autowired private DatasetClassDAO datasetClassDAO;
     @Autowired private ModelDAO modelDAO;
     @Autowired private PointLabelUseCase pointLabelUseCase;
     @Value("${preannotation.service.url:http://host.docker.internal:8520}") private String serviceUrl;
@@ -131,6 +136,7 @@ public class PreAnnotationUseCase {
         }
         try {
             var data = post("/preannotate", payload, 6 * 60 * 60 * 1000);
+            ensurePredictionClasses(r, data.getJSONObject("predictions"), userId);
             recordDAO.updateById(PreAnnotationRecord.builder().id(id).status(PreAnnotationStatusEnum.READY)
                     .predictions(data.getJSONObject("predictions")).occArtifacts(data.getJSONObject("occArtifacts"))
                     .outputPath(data.getStr("outputPath")).logPath(data.getStr("logPath")).updatedBy(userId).build());
@@ -138,6 +144,35 @@ public class PreAnnotationUseCase {
             recordDAO.updateById(PreAnnotationRecord.builder().id(id).status(PreAnnotationStatusEnum.FAILURE)
                     .errorReason(StrUtil.maxLength(e.getMessage(), 1000)).updatedBy(userId).build());
         }
+    }
+
+    private void ensurePredictionClasses(PreAnnotationRecord record, cn.hutool.json.JSONObject predictions, Long userId) {
+        if (predictions == null || predictions.isEmpty()) return;
+        var ids = record.getDataIds().stream().map(v -> Long.valueOf(String.valueOf(v))).collect(Collectors.toList());
+        var datasetByData = dataInfoDAO.listByIds(ids).stream().collect(Collectors.toMap(DataInfo::getId, DataInfo::getDatasetId));
+        var namesByDataset = new HashMap<Long, Set<String>>();
+        predictions.forEach((key, value) -> {
+            var datasetId = datasetByData.get(Long.valueOf(key));
+            if (datasetId == null) return;
+            JSONUtil.parseArray(value).forEach(raw -> {
+                var object = JSONUtil.parseObj(raw);
+                var name = object.getStr("label", object.getStr("className", object.getStr("modelClass", "object"))).trim();
+                if (!name.isEmpty()) namesByDataset.computeIfAbsent(datasetId, ignored -> new LinkedHashSet<>()).add(name);
+            });
+        });
+        namesByDataset.forEach((datasetId, names) -> {
+            var existing = datasetClassDAO.list(Wrappers.lambdaQuery(DatasetClass.class).eq(DatasetClass::getDatasetId, datasetId))
+                    .stream().map(item -> item.getName().toLowerCase()).collect(Collectors.toSet());
+            names.stream().filter(name -> !existing.contains(name.toLowerCase())).forEach(name -> {
+                var colors = List.of("#FF7A00", "#00D084", "#2F80ED", "#EB5757", "#9B51E0", "#00B8D9");
+                try {
+                    datasetClassDAO.save(DatasetClass.builder().datasetId(datasetId).name(name)
+                            .color(colors.get(Math.floorMod(name.hashCode(), colors.size()))).toolType(ToolTypeEnum.CUBOID)
+                            .toolTypeOptions(new cn.hutool.json.JSONObject()).attributes(new cn.hutool.json.JSONArray())
+                            .createdBy(userId).updatedBy(userId).build());
+                } catch (DuplicateKeyException ignored) { }
+            });
+        });
     }
 
     private cn.hutool.json.JSONObject post(String path, cn.hutool.json.JSONObject payload, int timeout) {

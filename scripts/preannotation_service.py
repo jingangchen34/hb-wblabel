@@ -139,7 +139,9 @@ def box_from_v2v(row: dict[str, str], data_id: int, index: int) -> dict[str, Any
         heading = float(row["heading_rad"])
     except (ValueError, KeyError): return None
     center[2] += height / 2.0
-    return {"id": f"V2V-{data_id}-{index}", "label": row.get("truck_type") or "Truck", "confidence": 1.0,
+    truck_type = str(row.get("truck_type") or "").strip()
+    label = "MineTruck" if truck_type == "1" else (truck_type or "Truck")
+    return {"id": f"V2V-{data_id}-{index}", "label": label, "confidence": 1.0,
             "x": center[0], "y": center[1], "z": center[2], "dx": length, "dy": width, "dz": height,
             "rotX": 0.0, "rotY": 0.0, "rotZ": heading, "source": "V2V",
             "vehicleId": row.get("vehicle_id"), "v2vTimestampNs": int(row.get("frame_timestamp_ns") or row.get("box_timestamp_ns") or 0)}
