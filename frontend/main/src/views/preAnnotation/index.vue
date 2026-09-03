@@ -4,7 +4,14 @@
       <div><h2>预标注</h2><p>AI 推理与 V2V 融合生成草稿，人工校验后提交为源数据真值。</p></div>
       <div><Button @click="load">刷新</Button><Button type="primary" @click="visible = true">新建预标注</Button></div>
     </div>
-    <Table :columns="columns" :data-source="records" row-key="id" :loading="loading" :pagination="pagination" @change="onPage" />
+    <Table :columns="columns" :data-source="records" row-key="id" :loading="loading" :pagination="pagination" @change="onPage">
+      <template #bodyCell="{ column, record }">
+        <Space v-if="column.key === 'actions'">
+          <Button size="small" type="primary" :disabled="record.status !== 'READY'" @click="open(record)">人工校验</Button>
+          <Button size="small" danger @click="remove(record)">删除</Button>
+        </Space>
+      </template>
+    </Table>
     <Modal v-model:visible="visible" title="新建预标注" :confirm-loading="creating" @ok="create">
       <Form layout="vertical" :model="form">
         <Form.Item label="任务名称"><Input v-model:value="form.name" placeholder="可选" /></Form.Item>
@@ -56,9 +63,7 @@ const columns:any[] = [
   { title:'进度', customRender:({record}:any)=>`${record.committedDataIds?.length || 0}/${record.dataCount || 0}` },
   { title:'状态', dataIndex:'status', customRender:({text}:any)=>h(Tag,{color:colors[text]},()=>text) },
   { title:'失败原因', dataIndex:'errorReason', ellipsis:true },
-  { title:'操作', customRender:({record}:any)=>h(Space,{},()=>[
-      h(Button,{size:'small',type:'primary',disabled:record.status!=='READY',onClick:()=>open(record)},()=>record.status==='COMMITTED'?'已提交':'人工校验'),
-      h(Button,{size:'small',danger:true,onClick:()=>remove(record)},()=> '删除')]) },
+  { title:'操作', key:'actions' },
 ];
 const pagination = computed(()=>({current:pageNo.value,pageSize:pageSize.value,total:total.value,showSizeChanger:true}));
 async function load(){ loading.value=true; try { const r=await getPreAnnotationPageApi({pageNo:pageNo.value,pageSize:pageSize.value}); records.value=r?.list||[]; total.value=r?.total||0; } finally { loading.value=false; } }
