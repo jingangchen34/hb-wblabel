@@ -4,7 +4,7 @@
       <div><h2>预标注</h2><p>AI 推理与 V2V 融合生成草稿，人工校验后提交为源数据真值。</p></div>
       <div><Button @click="load">刷新</Button><Button type="primary" @click="visible = true">新建预标注</Button></div>
     </div>
-    <Table :columns="columns" :data-source="records" row-key="id" :loading="loading" :pagination="pagination" @change="onPage">
+    <Table :columns="columns" :data-source="records" row-key="id" :loading="loading" :pagination="pagination" :scroll="{ x: 1100 }" @change="onPage">
       <template #bodyCell="{ column, record }">
         <Space v-if="column.key === 'actions'">
           <Button size="small" type="primary" :disabled="record.status !== 'READY'" @click="open(record)">人工校验</Button>
@@ -58,12 +58,12 @@ const sourceText:any = { AI:'AI 推理', V2V:'V2V 解析', HYBRID:'AI + V2V' };
 const open = (r:any) => goToTool({ datasetId:r.datasetId, dataId:r.dataIds?.[0], type:'readOnly', dataType:'frame', preAnnotationId:r.id, preAnnotation:'1' }, datasetTypeEnum.LIDAR_FUSION);
 const remove = (r:any) => createConfirm({ iconType:'warning', title:'删除该预标注任务？', onOk: async()=>{ await deletePreAnnotationApi(r.id); await load(); } });
 const columns:any[] = [
-  { title:'任务', dataIndex:'name' }, { title:'数据集', dataIndex:'datasetName' },
-  { title:'来源', dataIndex:'sourceMode', customRender:({text}:any)=>sourceText[text]||text },
-  { title:'进度', customRender:({record}:any)=>`${record.committedDataIds?.length || 0}/${record.dataCount || 0}` },
-  { title:'状态', dataIndex:'status', customRender:({text}:any)=>h(Tag,{color:colors[text]},()=>text) },
-  { title:'失败原因', dataIndex:'errorReason', ellipsis:true },
-  { title:'操作', key:'actions' },
+  { title:'任务', dataIndex:'name', width:180 }, { title:'数据集', dataIndex:'datasetName', width:220 },
+  { title:'来源', dataIndex:'sourceMode', width:110, customRender:({text}:any)=>sourceText[text]||text },
+  { title:'进度', width:110, customRender:({record}:any)=>`${record.committedDataIds?.length || 0}/${record.dataCount || 0}` },
+  { title:'状态', dataIndex:'status', width:110, customRender:({text}:any)=>h(Tag,{color:colors[text]},()=>text) },
+  { title:'失败原因', dataIndex:'errorReason', width:260, ellipsis:true },
+  { title:'操作', key:'actions', width:190, fixed:'right' },
 ];
 const pagination = computed(()=>({current:pageNo.value,pageSize:pageSize.value,total:total.value,showSizeChanger:true}));
 async function load(){ loading.value=true; try { const r=await getPreAnnotationPageApi({pageNo:pageNo.value,pageSize:pageSize.value}); records.value=r?.list||[]; total.value=r?.total||0; } finally { loading.value=false; } }
