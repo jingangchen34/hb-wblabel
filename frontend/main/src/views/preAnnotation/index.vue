@@ -61,7 +61,10 @@ const columns:any[] = [
   { title:'任务', dataIndex:'name', width:180 }, { title:'数据集', dataIndex:'datasetName', width:220 },
   { title:'来源', dataIndex:'sourceMode', width:110, customRender:({text}:any)=>sourceText[text]||text },
   { title:'进度', width:110, customRender:({record}:any)=>`${record.committedDataIds?.length || 0}/${record.dataCount || 0}` },
-  { title:'状态', dataIndex:'status', width:110, customRender:({text}:any)=>h(Tag,{color:colors[text]},()=>text) },
+  { title:'状态', dataIndex:'status', width:220, customRender:({text,record}:any)=>h(Space,{},()=>[
+      h(Tag,{color:colors[text]},()=>text),
+      text==='FAILURE' ? h(Button,{size:'small',danger:true,onClick:()=>remove(record)},()=> '删除失败任务') : null,
+    ]) },
   { title:'失败原因', dataIndex:'errorReason', width:260, ellipsis:true },
   { title:'操作', key:'actions', width:190, fixed:'right' },
 ];
