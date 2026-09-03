@@ -45,6 +45,7 @@ public class PreAnnotationUseCase {
     @Autowired private ModelDAO modelDAO;
     @Autowired private PointLabelUseCase pointLabelUseCase;
     @Value("${preannotation.service.url:http://host.docker.internal:8520}") private String serviceUrl;
+    @Value("${preannotation.service.fallback-url:http://172.18.0.1:8520}") private String fallbackServiceUrl;
 
     public Long create(PreAnnotationCreateBO bo) {
         var datasetIds = bo.getDatasetIds() == null ? List.<Long>of() : bo.getDatasetIds().stream().distinct().collect(Collectors.toList());
@@ -176,12 +177,28 @@ public class PreAnnotationUseCase {
     }
 
     private cn.hutool.json.JSONObject post(String path, cn.hutool.json.JSONObject payload, int timeout) {
-        var response = HttpRequest.post(StrUtil.removeSuffix(serviceUrl, "/") + path)
-                .body(payload.toString(), ContentType.JSON.getValue()).timeout(timeout).execute();
-        if (response.getStatus() != HttpStatus.HTTP_OK) throw new UsecaseException("Pre-annotation service error: " + response.body());
-        var body = JSONUtil.parseObj(response.body());
-        if (!"OK".equalsIgnoreCase(body.getStr("code"))) throw new UsecaseException(body.getStr("message", "Pre-annotation failed."));
-        return body.getJSONObject("data");
+        RuntimeException connectionError = null;
+        var urls = new LinkedHashSet<>(Arrays.asList(serviceUrl, fallbackServiceUrl));
+        for (var baseUrl : urls) {
+            if (StrUtil.isBlank(baseUrl)) continue;
+            try {
+                var response = HttpRequest.post(StrUtil.removeSuffix(baseUrl, "/") + path)
+                        .body(payload.toString(), ContentType.JSON.getValue()).timeout(timeout).execute();
+                if (response.getStatus() != HttpStatus.HTTP_OK) {
+                    throw new UsecaseException("Pre-annotation service error: " + response.body());
+                }
+                var body = JSONUtil.parseObj(response.body());
+                if (!"OK".equalsIgnoreCase(body.getStr("code"))) {
+                    throw new UsecaseException(body.getStr("message", "Pre-annotation failed."));
+                }
+                return body.getJSONObject("data");
+            } catch (UsecaseException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                connectionError = e;
+            }
+        }
+        throw Objects.requireNonNull(connectionError);
     }
 
     private PreAnnotationRecord requireRecord(Long id) {
