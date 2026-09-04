@@ -22,7 +22,7 @@ MAX_V2V_GAP_NS = int(os.getenv("PREANNOTATION_V2V_MAX_GAP_NS", "500000000"))
 
 
 def mysql_rows(sql: str) -> list[list[str]]:
-    cmd = ["docker", "exec", MYSQL_CONTAINER, "mysql", f"-u{MYSQL_USER}", f"-p{MYSQL_PASSWORD}",
+    cmd = ["docker", "exec", "-i", MYSQL_CONTAINER, "mysql", f"-u{MYSQL_USER}", f"-p{MYSQL_PASSWORD}",
            "--batch", "--raw", "--skip-column-names", MYSQL_DATABASE]
     # Feed SQL over stdin so large frame-id lists do not exceed Linux ARG_MAX.
     result = subprocess.run(cmd, input=sql, text=True, capture_output=True, timeout=120)
