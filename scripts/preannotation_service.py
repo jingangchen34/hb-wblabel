@@ -2,7 +2,7 @@
 """Independent AI/V2V pre-annotation and atomic ground-truth commit service."""
 from __future__ import annotations
 
-import argparse, base64, csv, json, math, os, shutil, subprocess, tempfile, time
+import argparse, base64, csv, hashlib, json, math, os, shutil, subprocess, tempfile, time
 from collections import defaultdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -278,6 +278,151 @@ def attrs_to_annotation(obj):
             "num_lidar_pts":max(0,int(contour.get("pointN") or 0))}
 
 
+def read_json_object(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
+    return value if isinstance(value, dict) else {}
+
+
+def stable_frame_id(point_path: Path) -> str:
+    try:
+        identity = point_path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        identity = point_path.resolve().as_posix()
+    return hashlib.md5(identity.encode("utf-8")).hexdigest()
+
+
+def sensor_timestamp(filename: str) -> str:
+    value = timestamp_of(Path(filename).stem)
+    return str(value) if value else Path(filename).stem
+
+
+def cylindrical_camera_file(clip: Path, camera_name: str, timestamp: str) -> str | None:
+    directory = clip / "cameras_cylindrical" / camera_name
+    if not directory.is_dir():
+        return None
+    matches = sorted(path for path in directory.iterdir() if path.is_file() and timestamp in path.stem)
+    return matches[0].relative_to(clip).as_posix() if matches else None
+
+
+def build_frame_entries(
+    clip: Path,
+    existing: dict[str, Any],
+    annotations: dict[str, list[dict]],
+) -> dict[str, Any]:
+    meta = read_json_object(clip / "meta.json")
+    pose = read_json_object(clip / "pose.json")
+    key_frames = meta.get("key_frame") if isinstance(meta.get("key_frame"), dict) else {}
+    lidar_files = key_frames.get("LIDAR_TOP") if isinstance(key_frames.get("LIDAR_TOP"), list) else []
+    if not lidar_files:
+        lidar_files = [path.name for path in sorted((clip / "lidars").rglob("*.bin"))]
+
+    ordered: list[tuple[str, Path, int]] = []
+    for index, filename_value in enumerate(lidar_files):
+        filename = Path(str(filename_value)).name
+        timestamp = timestamp_of(filename)
+        if not timestamp:
+            continue
+        point_path = clip / "lidars" / "LIDAR_CAR" / filename
+        if not point_path.is_file():
+            candidates = list((clip / "lidars").rglob(filename))
+            if candidates:
+                point_path = candidates[0]
+        ordered.append((str(timestamp), point_path, index))
+    if not ordered:
+        raise ValueError(f"No LiDAR frames found in {clip}")
+
+    frame_keys = [item[0] for item in ordered]
+    result: dict[str, Any] = {"first_frame": frame_keys[0]}
+    camera_names = [
+        name for name, files in key_frames.items()
+        if name != "LIDAR_TOP" and isinstance(files, list)
+    ]
+    camera_order = {
+        name: index for index, name in enumerate((
+            "CAMERA_BACK_EYE", "CAMERA_FRONT_EYE", "CAMERA_FRONT_MIDDLE",
+            "CAMERA_LEFT_BACK", "CAMERA_LEFT_FRONT",
+            "CAMERA_RIGHT_BACK", "CAMERA_RIGHT_FRONT",
+        ))
+    }
+    camera_names.sort(key=lambda name: (camera_order.get(name, len(camera_order)), name))
+    pose_keys = [str(key) for key in pose if str(key).isdigit()]
+
+    for offset, (key, point_path, meta_index) in enumerate(ordered):
+        old = existing.get(key) if isinstance(existing.get(key), dict) else {}
+        old_frame_id = str(old.get("FrameID") or "")
+        frame_id = (
+            old_frame_id
+            if len(old_frame_id) == 32 and old_frame_id.lower() != key.lower()
+            else stable_frame_id(point_path)
+        )
+        if key in pose:
+            ego_file = key
+        elif pose_keys:
+            ego_file = min(pose_keys, key=lambda value: abs(int(value) - int(key)))
+        else:
+            ego_file = key
+        cam_files: dict[str, Any] = {}
+        for camera_name in camera_names:
+            files = key_frames[camera_name]
+            if meta_index >= len(files):
+                continue
+            filename = Path(str(files[meta_index])).name
+            camera_path = clip / "cameras" / camera_name / filename
+            if not camera_path.is_file():
+                continue
+            camera_timestamp = sensor_timestamp(filename)
+            camera_entry: dict[str, Any] = {
+                "cam_file": camera_path.relative_to(clip).as_posix(),
+                "ego_time": camera_timestamp,
+            }
+            cylindrical = cylindrical_camera_file(clip, camera_name, camera_timestamp)
+            if cylindrical:
+                camera_entry["cylindrical_cam_file"] = cylindrical
+            cam_files[camera_name] = camera_entry
+
+        result[key] = {
+            "FrameID": frame_id,
+            "channel": "LIDAR_CAR",
+            "filepath": point_path.relative_to(clip).as_posix(),
+            "timestamp": int(key),
+            "next_time_file": frame_keys[offset + 1] if offset + 1 < len(frame_keys) else None,
+            "prev_time_file": frame_keys[offset - 1] if offset else None,
+            "ego_file": str(ego_file),
+            "cam_files": cam_files,
+            "annotations": annotations[key] if key in annotations else old.get("annotations", []),
+        }
+    return result
+
+
+def normalize_clip_track_ids(doc: dict[str, Any]) -> None:
+    annotations = []
+    for key, frame in doc.items():
+        if key == "first_frame" or not isinstance(frame, dict):
+            continue
+        annotations.extend(item for item in frame.get("annotations", []) if isinstance(item, dict))
+    numeric = {
+        int(str(annotation.get("TrackID")))
+        for annotation in annotations
+        if str(annotation.get("TrackID", "")).isdigit()
+    }
+    next_id = max(numeric, default=0) + 1
+    mapping: dict[str, int] = {}
+    for annotation in annotations:
+        raw = str(annotation.get("TrackID", "")).strip()
+        if raw.isdigit():
+            annotation["TrackID"] = int(raw)
+        elif raw:
+            if raw not in mapping:
+                while next_id in numeric:
+                    next_id += 1
+                mapping[raw] = next_id
+                numeric.add(next_id)
+                next_id += 1
+            annotation["TrackID"] = mapping[raw]
+
+
 def commit(payload):
     ids=[int(x) for x in payload.get("dataIds") or []]; frames=load_frames(ids)
     gt=defaultdict(list)
@@ -308,13 +453,15 @@ def commit(payload):
             target=safe_path(original["path"]) if original else clip/"anno"/"occ_labels"/"LIDAR_CAR"/(point_path.stem+".label")
             atomic_write(target,labels); occ_written+=1
     for path,items in obstacle_groups.items():
-        doc=json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        existing=read_json_object(path)
+        clip=items[0][3]
+        annotations_by_key={}
         for frame,annotations,point_path,clip in sorted(items, key=lambda item: timestamp_of(item[2].stem)):
             timestamp=timestamp_of(point_path.stem)
             key=str(timestamp) if timestamp else point_path.stem
-            entry=doc.get(key) if isinstance(doc.get(key),dict) else {"FrameID":key,"channel":"LIDAR_CAR","filepath":str(point_path.relative_to(clip)),"timestamp":timestamp}
-            entry["annotations"]=annotations; doc[key]=entry
-            if "first_frame" not in doc: doc["first_frame"]=key
+            annotations_by_key[key]=annotations
+        doc=build_frame_entries(clip,existing,annotations_by_key)
+        normalize_clip_track_ids(doc)
         atomic_write(path,(json.dumps(doc,ensure_ascii=False,indent=2)+"\n").encode("utf-8"))
     return {"clips":len(obstacle_groups),"frames":len(frames),"occLabels":occ_written}
 
