@@ -5,8 +5,8 @@
       <div><Button @click="load">刷新</Button><Button type="primary" @click="visible = true">新建预标注</Button></div>
     </div>
     <Table :columns="columns" :data-source="records" row-key="id" :loading="loading" :pagination="pagination" :scroll="{ x: 1100 }" @change="onPage">
-      <template #bodyCell="{ column, record }">
-        <Space v-if="column.key === 'actions'">
+      <template #actions="{ record }">
+        <Space>
           <Button size="small" type="primary" :disabled="record.status !== 'READY'" @click="open(record)">人工校验</Button>
           <Button size="small" danger @click="remove(record)">删除</Button>
         </Space>
@@ -66,7 +66,7 @@ const columns:any[] = [
       text==='FAILURE' ? h(Button,{size:'small',danger:true,onClick:remove.bind(null,record)},()=> '删除失败任务') : null,
     ]) },
   { title:'失败原因', dataIndex:'errorReason', width:260, ellipsis:true },
-  { title:'操作', key:'actions', width:190, fixed:'right' },
+  { title:'操作', key:'actions', width:190, fixed:'right', slots:{ customRender:'actions' } },
 ];
 const pagination = computed(()=>({current:pageNo.value,pageSize:pageSize.value,total:total.value,showSizeChanger:true}));
 async function load(){ loading.value=true; try { const r=await getPreAnnotationPageApi({pageNo:pageNo.value,pageSize:pageSize.value}); records.value=r?.list||[]; total.value=r?.total||0; } finally { loading.value=false; } }
