@@ -45,14 +45,14 @@
             </button>
             <button :disabled="undoStack.length === 0" @click="undoLastAction">Undo</button>
             <button @click="fillSelectedBox">Fill Box</button>
-            <button @click="saveLabels">Save</button>
+            <button @click="saveLabels()">Save</button>
         </div>
         <div class="hint">Brush points, or select a 3D box and fill all points inside it.</div>
     </div>
 </template>
 
 <script setup lang="ts">
-    import { reactive, onBeforeUnmount } from 'vue';
+    import { reactive, onBeforeUnmount, onMounted } from 'vue';
     import * as THREE from 'three';
     import { Box, PointsMaterial } from 'pc-render';
     import { useInjectEditor } from '../../../state';
@@ -312,7 +312,7 @@
         editor.showMsg('success', `Relabeled ${indices.length} points`);
     }
 
-    async function saveLabels() {
+    async function saveLabels(options: { throwOnError?: boolean } = {}) {
         const frame = editor.getCurrentFrame();
         if (!frame) {
             editor.showMsg('warning', 'No OCC labels loaded');
@@ -342,6 +342,7 @@
         } catch (error) {
             console.error(error);
             editor.showMsg('error', 'OCC label save failed');
+            if (options.throwOnError) throw error;
         } finally {
             editor.showLoading(false);
         }
@@ -496,7 +497,12 @@
         return new Promise((resolve) => window.setTimeout(resolve, 0));
     }
 
+    onMounted(() => {
+        (editor as any).saveOccLabels = () => saveLabels({ throwOnError: true });
+    });
+
     onBeforeUnmount(() => {
+        if ((editor as any).saveOccLabels) delete (editor as any).saveOccLabels;
         const canvas = getMainCanvas();
         if (canvas) detach(canvas);
     });

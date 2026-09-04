@@ -143,6 +143,8 @@ export default function useHeader() {
         if (!approved) return;
         bsState.submitting = true;
         try {
+            const saveOccLabels = (editor as any).saveOccLabels as (() => Promise<void>) | undefined;
+            if (saveOccLabels) await saveOccLabels();
             await editor.saveObject(editor.state.frames, true);
             await api.commitPreAnnotation(bsState.query.preAnnotationId, editor.state.frames.map((frame) => frame.id));
             editor.showMsg('success', '当前 clip 真值已写回源数据目录');

@@ -109,7 +109,20 @@ export default class BusinessManager extends BaseBusinessManager {
         if (this.editor.bsState.query.preAnnotationId) {
             const ids = Array.isArray(frame) ? frame.map((e) => String(e.id)) : [String(frame.id)];
             const drafts = await api.getPreAnnotationObjectsMap(this.editor.bsState.query.preAnnotationId, ids);
-            ids.forEach((id) => { data.objectsMap[id] = [...(data.objectsMap[id] || []), ...(drafts[id] || [])]; });
+            ids.forEach((id) => {
+                const existing = data.objectsMap[id] || [];
+                const existingFrontIds = new Set(
+                    existing.flatMap((item: any) => [item.frontId, item.id])
+                        .filter((value: any) => value !== undefined && value !== null && value !== '')
+                        .map(String),
+                );
+                const pendingDrafts = (drafts[id] || []).filter((item: any) => {
+                    const identity = item.frontId ?? item.id;
+                    return identity === undefined || identity === null || identity === '' ||
+                        !existingFrontIds.has(String(identity));
+                });
+                data.objectsMap[id] = [...existing, ...pendingDrafts];
+            });
         }
         return data;
     }

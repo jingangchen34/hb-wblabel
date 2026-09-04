@@ -130,45 +130,55 @@ def timestamp_of(name: str) -> int:
     return int(next((v for v in digits if len(v) >= 16), "0"))
 
 
-def box_from_v2v(row: dict[str, str], data_id: int, index: int) -> dict[str, Any] | None:
+def box_from_v2v(row: dict[str, str], data_id: int, index: int,
+                 track_id: str | None = None, track_name: str | None = None) -> dict[str, Any] | None:
     try:
         pts = [(float(row[f"point{i}_x_m"]), float(row[f"point{i}_y_m"]), float(row[f"point{i}_z_m"])) for i in range(1, 9)]
         height = float(row.get("height_m") or (max(p[2] for p in pts)-min(p[2] for p in pts)))
         center = [float(row["center_x_m"]), float(row["center_y_m"]), float(row["center_z_m"])]
-        length = float(row["length_m"])
-        width = float(row["width_m"])
+        length = float(row["length_m"]); width = float(row["width_m"])
         raw_heading = float(row["heading_rad"])
-        heading = math.pi / 2.0 - raw_heading
-        heading = math.atan2(math.sin(heading), math.cos(heading))
+        heading = math.atan2(math.sin(math.pi / 2.0 - raw_heading), math.cos(math.pi / 2.0 - raw_heading))
     except (ValueError, KeyError): return None
     center[2] += height / 2.0
     truck_type = str(row.get("truck_type") or "").strip()
+    vehicle_id = str(row.get("vehicle_id") or "").strip()
     label = "MineTruck" if truck_type == "1" else (truck_type or "Truck")
-    return {"id": f"V2V-{data_id}-{index}", "label": label, "confidence": 1.0,
-            "x": center[0], "y": center[1], "z": center[2], "dx": length, "dy": width, "dz": height,
-            "rotX": 0.0, "rotY": 0.0, "rotZ": heading, "source": "V2V",
-            "vehicleId": row.get("vehicle_id"), "v2vTimestampNs": int(row.get("frame_timestamp_ns") or row.get("box_timestamp_ns") or 0)}
+    box = {"id": f"V2V-{data_id}-{index}", "label": label, "confidence": 1.0,
+           "x": center[0], "y": center[1], "z": center[2], "dx": length, "dy": width, "dz": height,
+           "rotX": 0.0, "rotY": 0.0, "rotZ": heading, "source": "V2V",
+           "vehicleId": vehicle_id, "v2vTimestampNs": int(row.get("frame_timestamp_ns") or row.get("box_timestamp_ns") or 0)}
+    if track_id:
+        box.update({"trackId": track_id, "trackID": track_id, "TrackID": track_id, "trackName": track_name or track_id})
+    return box
 
 
 def load_v2v(frames: dict[int, dict[str, Any]]) -> dict[str, list[dict]]:
-    csv_cache, result = {}, {}
+    csv_cache, track_cache, result = {}, {}, {}
     for frame in frames.values():
         item = resource(frame, "v2v", ".csv")
         if not item: result[str(frame["id"])] = []; continue
         path = safe_path(item["path"])
         if path not in csv_cache:
             with path.open(encoding="utf-8-sig", newline="") as stream: csv_cache[path] = list(csv.DictReader(stream))
-        ts = timestamp_of(frame["name"])
-        grouped = defaultdict(list)
+            vehicles = sorted({str(row.get("vehicle_id") or "").strip() for row in csv_cache[path] if str(row.get("vehicle_id") or "").strip()})
+            track_cache[path] = {vehicle_id: str(index + 1) for index, vehicle_id in enumerate(vehicles)}
+        ts = timestamp_of(frame["name"]); grouped = defaultdict(list)
         for row in csv_cache[path]:
             try: grouped[int(row.get("frame_timestamp_ns") or row.get("box_timestamp_ns") or 0)].append(row)
             except ValueError: pass
         if not grouped: result[str(frame["id"])] = []; continue
         nearest = min(grouped, key=lambda value: abs(value-ts)) if ts else min(grouped)
         if ts and abs(nearest-ts) > MAX_V2V_GAP_NS: result[str(frame["id"])] = []; continue
-        result[str(frame["id"])] = [box for i,row in enumerate(grouped[nearest]) if (box := box_from_v2v(row, frame["id"], i))]
+        boxes = []
+        for index,row in enumerate(grouped[nearest]):
+            vehicle_id = str(row.get("vehicle_id") or "").strip()
+            track_name = track_cache[path].get(vehicle_id, str(index + 1))
+            track_id = f"V2V:{frame['parentId']}:{vehicle_id or f'box-{index}'}"
+            box = box_from_v2v(row, frame["id"], index, track_id, track_name)
+            if box: boxes.append(box)
+        result[str(frame["id"])] = boxes
     return result
-
 
 def rect(box):
     cx,cy,dx,dy,yaw = (float(box.get(k,0)) for k in ("x","y","dx","dy","rotZ"))
@@ -228,13 +238,44 @@ def atomic_write(path: Path, data: bytes):
         if os.path.exists(tmp): os.unlink(tmp)
 
 
+def class_value(obj: dict[str, Any], *names: str, default=None):
+    wanted = {name.lower() for name in names}
+    for item in obj.get("classValues") or []:
+        if not isinstance(item, dict): continue
+        key = str(item.get("name") or item.get("id") or "").lower()
+        if key in wanted and item.get("value") is not None: return item.get("value")
+    return default
+
+
+def euler_xyz_to_wxyz(roll: float, pitch: float, yaw: float) -> list[float]:
+    cx, sx = math.cos(roll / 2.0), math.sin(roll / 2.0)
+    cy, sy = math.cos(pitch / 2.0), math.sin(pitch / 2.0)
+    cz, sz = math.cos(yaw / 2.0), math.sin(yaw / 2.0)
+    return [cx*cy*cz-sx*sy*sz, sx*cy*cz+cx*sy*sz,
+            cx*sy*cz-sx*cy*sz, cx*cy*sz+sx*sy*cz]
+
+
 def attrs_to_annotation(obj):
     contour=obj.get("contour") or {}; center=contour.get("center3D") or {}; size=contour.get("size3D") or {}; rot=contour.get("rotation3D") or {}
-    yaw=float(rot.get("z",0)); label=obj.get("modelClass") or obj.get("classType") or (obj.get("meta") or {}).get("classType") or "unknown"
-    return {"translation":[float(center.get("x",0)),float(center.get("y",0)),float(center.get("z",0))],
+    roll,pitch,yaw=(float(rot.get(axis,0) or 0) for axis in ("x","y","z"))
+    label=obj.get("className") or obj.get("modelClass") or obj.get("classType") or (obj.get("meta") or {}).get("classType") or "unknown"
+    raw_track=obj.get("trackName") or obj.get("TrackID") or obj.get("trackID") or obj.get("trackId") or ""
+    track_id=int(raw_track) if str(raw_track).isdigit() else str(raw_track)
+    attributes={}
+    for item in obj.get("classValues") or []:
+        if not isinstance(item,dict) or item.get("value") is None: continue
+        key=str(item.get("name") or item.get("id") or "").strip()
+        if key: attributes[key]=item.get("value")
+    return {"TrackID":track_id,"category":label,
+            "sub_category":class_value(obj,"sub_category","subcategory",default=label),
+            "attribute":attributes or None,
+            "Occlusion":int(class_value(obj,"occlusion",default=0) or 0),
+            "Truncation":int(class_value(obj,"truncation",default=0) or 0),
+            "translation":[float(center.get("x",0)),float(center.get("y",0)),float(center.get("z",0))],
             "size":[float(size.get("x",0)),float(size.get("y",0)),float(size.get("z",0))],
-            "rotation":[math.cos(yaw/2),0.0,0.0,math.sin(yaw/2)],"category":label,"sub_category":"",
-            "velocity":[0.0,0.0,0.0],"num_lidar_pts":max(1,int(contour.get("pointN") or 1)),"num_radar_pts":0}
+            "velocity":[float(class_value(obj,"velocity_x",default=0) or 0),float(class_value(obj,"velocity_y",default=0) or 0),float(class_value(obj,"velocity_z",default=0) or 0)],
+            "rotation":euler_xyz_to_wxyz(roll,pitch,yaw),
+            "num_lidar_pts":max(0,int(contour.get("pointN") or 0))}
 
 
 def commit(payload):
@@ -254,7 +295,7 @@ def commit(payload):
         point_path=safe_path(point["path"]); clip=clip_root_from_point(point_path)
         obstacle=resource(frame,"obstacle_3d.json")
         obstacle_path=safe_path(obstacle["path"]) if obstacle else clip/"anno"/"obstacle_3d.json"
-        obstacle_groups[obstacle_path].append((frame,gt.get(data_id,[]),point_path))
+        obstacle_groups[obstacle_path].append((frame,gt.get(data_id,[]),point_path,clip))
         encoded=occ_labels.get(str(data_id)); labels = base64.b64decode(encoded) if encoded else None
         if labels is None:
             source = artifact_path((occ_artifacts.get(str(data_id)) or {}).get("labelUrl", ""))
@@ -268,9 +309,10 @@ def commit(payload):
             atomic_write(target,labels); occ_written+=1
     for path,items in obstacle_groups.items():
         doc=json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        for frame,annotations,point_path in items:
-            key=point_path.stem
-            entry=doc.get(key) if isinstance(doc.get(key),dict) else {"FrameID":key,"channel":"LIDAR_CAR","filepath":str(point_path.relative_to(clip)),"timestamp":int(key) if key.isdigit() else 0}
+        for frame,annotations,point_path,clip in sorted(items, key=lambda item: timestamp_of(item[2].stem)):
+            timestamp=timestamp_of(point_path.stem)
+            key=str(timestamp) if timestamp else point_path.stem
+            entry=doc.get(key) if isinstance(doc.get(key),dict) else {"FrameID":key,"channel":"LIDAR_CAR","filepath":str(point_path.relative_to(clip)),"timestamp":timestamp}
             entry["annotations"]=annotations; doc[key]=entry
             if "first_frame" not in doc: doc["first_frame"]=key
         atomic_write(path,(json.dumps(doc,ensure_ascii=False,indent=2)+"\n").encode("utf-8"))

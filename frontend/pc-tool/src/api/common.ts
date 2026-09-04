@@ -130,13 +130,21 @@ function normalizeEvaluationObject(item: any, dataId: string, source: 'GT' | 'PR
 
 function normalizePreAnnotationObject(item: any, dataId: string, index: number): any {
     const normalized = normalizeEvaluationObject(item, dataId, 'PRED', index);
+    const suppliedTrackId = item.trackId ?? item.trackID ?? item.TrackID;
+    const stableTrackId = suppliedTrackId !== undefined && suppliedTrackId !== ''
+        ? String(suppliedTrackId)
+        : normalized.trackId;
+    const stableTrackName = String(item.trackName ?? stableTrackId ?? '');
     return {
         ...normalized,
         source: item.source || 'PRE_ANNOTATION',
         sourceId: PRE_ANNOTATION_SOURCE_ID,
         sourceType: SourceType.MODEL,
         color: item.source === 'V2V' ? '#22d3ee' : '#f59e0b',
-        trackName: `${item.source || 'AI'} ${normalized.trackName || normalized.classType || ''}`.trim(),
+        trackId: stableTrackId,
+        trackID: stableTrackId,
+        TrackID: stableTrackId,
+        trackName: stableTrackName,
     };
 }
 
