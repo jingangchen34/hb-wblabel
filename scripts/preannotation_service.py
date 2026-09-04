@@ -137,7 +137,9 @@ def box_from_v2v(row: dict[str, str], data_id: int, index: int) -> dict[str, Any
         center = [float(row["center_x_m"]), float(row["center_y_m"]), float(row["center_z_m"])]
         length = float(row["length_m"])
         width = float(row["width_m"])
-        heading = float(row["heading_rad"])
+        raw_heading = float(row["heading_rad"])
+        heading = math.pi / 2.0 - raw_heading
+        heading = math.atan2(math.sin(heading), math.cos(heading))
     except (ValueError, KeyError): return None
     center[2] += height / 2.0
     truck_type = str(row.get("truck_type") or "").strip()
