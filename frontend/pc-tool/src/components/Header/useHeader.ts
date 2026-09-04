@@ -445,28 +445,44 @@ export default function useHeader() {
             config.operateItemType = 'SCENE';
         }
 
+        const enterRecord = (recordId: string | number) => {
+            let host = location.host || location.hostname;
+            let pathname = location.pathname;
+            let protocol = location.protocol;
+            const url = new URL(`${protocol}//${host + pathname}${location.search}`);
+            url.searchParams.set('recordId', String(recordId));
+            url.searchParams.delete('type');
+            if (url.searchParams.get('evaluationId')) {
+                url.searchParams.set('humanReview', '1');
+            }
+            location.href = url.toString();
+        };
+
         bsState.modifying = true;
         try {
             let recordInfo = await api.getLockRecord(bsState.datasetId);
             if (recordInfo.data && recordInfo.data.recordId) {
-                editor.showMsg('warning', 'You have 1 data occupied');
+                const recordId = recordInfo.data.recordId;
+                const locked = await api.getInfoByRecordId(String(recordId));
+                const lockedIds = new Set((locked.dataInfos || []).map((item: any) => String(item.id)));
+                const sameScene =
+                    config.operateItemType === 'SCENE' &&
+                    String(locked.seriesFrameId || '') === String(config.dataIds[0] || '');
+                const sameData =
+                    config.operateItemType === 'SINGLE_DATA' &&
+                    config.dataIds.every((id) => lockedIds.has(String(id)));
+                if (sameScene || sameData) {
+                    enterRecord(recordId);
+                    return;
+                }
+                editor.showMsg('warning', 'You have another clip occupied');
                 bsState.modifying = false;
                 return;
             }
 
             let data = await api.annotateData(config);
             if (data.code === 'OK' && data.data) {
-                let recordId = data.data;
-                let host = location.host || location.hostname;
-                let pathname = location.pathname;
-                let protocol = location.protocol;
-                const url = new URL(`${protocol}//${host + pathname}${location.search}`);
-                url.searchParams.set('recordId', recordId);
-                url.searchParams.delete('type');
-                if (url.searchParams.get('evaluationId')) {
-                    url.searchParams.set('humanReview', '1');
-                }
-                location.href = url.toString();
+                enterRecord(data.data);
             } else {
                 editor.showMsg('warning', data.message || `Operation Failed`);
             }
