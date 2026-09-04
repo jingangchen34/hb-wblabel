@@ -8,6 +8,9 @@ export const createPreAnnotationApi = (params: any) =>
 export const getPreAnnotationPageApi = (params: { pageNo?: number; pageSize?: number }) =>
   defHttp.get<any>({ url: `${base}/page`, params });
 
+export const getPreAnnotationClipsApi = (id: number) =>
+  defHttp.get<any[]>({ url: `${base}/${id}/clips` });
+
 export const commitPreAnnotationApi = (id: number) =>
   defHttp.post<any>({ url: `${base}/${id}/commit` });
 

@@ -1,6 +1,7 @@
 package ai.basic.x1.usecase;
 
 import ai.basic.x1.adapter.dto.PreAnnotationFrameDTO;
+import ai.basic.x1.adapter.dto.PreAnnotationClipDTO;
 import ai.basic.x1.adapter.port.dao.DataInfoDAO;
 import ai.basic.x1.adapter.port.dao.DatasetClassDAO;
 import ai.basic.x1.adapter.port.dao.ModelDAO;
@@ -95,10 +96,49 @@ public class PreAnnotationUseCase {
         return dataIds.stream().distinct().map(dataId -> frame(id, dataId)).collect(Collectors.toList());
     }
 
+    public List<PreAnnotationClipDTO> clips(Long id) {
+        var record = requireRecord(id);
+        var allowed = record.getDataIds().stream()
+                .map(value -> Long.valueOf(String.valueOf(value)))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        var committed = record.getCommittedDataIds() == null
+                ? Set.<Long>of()
+                : record.getCommittedDataIds().stream()
+                        .map(value -> Long.valueOf(String.valueOf(value)))
+                        .collect(Collectors.toSet());
+        var frameById = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                        .eq(DataInfo::getDatasetId, record.getDatasetId())
+                        .eq(DataInfo::getType, ItemTypeEnum.SINGLE_DATA)
+                        .eq(DataInfo::getIsDeleted, false))
+                .stream().filter(frame -> allowed.contains(frame.getId()))
+                .collect(Collectors.toMap(DataInfo::getId, frame -> frame));
+        var framesByScene = new LinkedHashMap<Long, List<DataInfo>>();
+        allowed.forEach(dataId -> {
+            var frame = frameById.get(dataId);
+            if (frame != null) {
+                framesByScene.computeIfAbsent(frame.getParentId(), ignored -> new ArrayList<>()).add(frame);
+            }
+        });
+        var sceneNames = dataInfoDAO.listByIds(framesByScene.keySet()).stream()
+                .collect(Collectors.toMap(DataInfo::getId, DataInfo::getName));
+        return framesByScene.entrySet().stream().map(entry -> {
+            var frames = entry.getValue();
+            var committedCount = frames.stream().filter(frame -> committed.contains(frame.getId())).count();
+            return PreAnnotationClipDTO.builder()
+                    .sceneId(entry.getKey())
+                    .sceneName(sceneNames.getOrDefault(entry.getKey(), String.valueOf(entry.getKey())))
+                    .firstDataId(frames.get(0).getId())
+                    .dataCount((long) frames.size())
+                    .committedCount(committedCount)
+                    .completed(committedCount == frames.size())
+                    .build();
+        }).collect(Collectors.toList());
+    }
+
     public PreAnnotationRecord commit(Long id, List<Long> requestedDataIds, Long userId) {
         var record = requireRecord(id);
-        if (record.getStatus() != PreAnnotationStatusEnum.READY)
-            throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Only a READY pre-annotation job can be committed.");
+        if (record.getStatus() != PreAnnotationStatusEnum.READY && record.getStatus() != PreAnnotationStatusEnum.COMMITTED)
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Only a READY or COMMITTED pre-annotation job can be committed.");
         var allowed = record.getDataIds().stream().map(v -> Long.valueOf(String.valueOf(v))).collect(Collectors.toSet());
         var commitIds = requestedDataIds.stream().filter(allowed::contains).distinct().collect(Collectors.toList());
         if (commitIds.isEmpty()) throw new UsecaseException(UsecaseCode.PARAM_ERROR, "No frame in this clip belongs to the job.");

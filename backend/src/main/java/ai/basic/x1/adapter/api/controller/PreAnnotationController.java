@@ -38,6 +38,11 @@ public class PreAnnotationController extends BaseController {
         return useCase.frames(id, dataIds);
     }
 
+    @GetMapping("{id}/clips")
+    public List<PreAnnotationClipDTO> clips(@PathVariable Long id) {
+        return useCase.clips(id);
+    }
+
     @PostMapping("{id}/commit")
     public PreAnnotationRecordDTO commit(@PathVariable Long id, @Validated @RequestBody PreAnnotationCommitDTO dto) {
         return DefaultConverter.convert(useCase.commit(id, dto.getDataIds(), loggedUser() == null ? null : loggedUser().getId()), PreAnnotationRecordDTO.class);

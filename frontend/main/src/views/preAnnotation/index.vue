@@ -7,7 +7,7 @@
     <Table :columns="columns" :data-source="records" row-key="id" :loading="loading" :pagination="pagination" :scroll="{ x: 1100 }" @change="onPage">
       <template #actions="{ record }">
         <Space>
-          <Button size="small" type="primary" :disabled="record.status !== 'READY'" @click="open(record)">人工校验</Button>
+          <Button size="small" type="primary" :disabled="!['READY','COMMITTED'].includes(record.status)" @click="selectClip(record)">选择 Clip</Button>
           <Button size="small" danger @click="remove(record)">删除</Button>
         </Space>
       </template>
@@ -36,14 +36,23 @@
         </Form.Item>
       </Form>
     </Modal>
+    <Modal v-model:visible="clipVisible" :title="`${activeRecord?.name || ''} - 选择人工校验 Clip`" :footer="null" width="900px">
+      <Table :columns="clipColumns" :data-source="clips" row-key="sceneId" :loading="clipLoading" :pagination="{ pageSize: 10 }">
+        <template #clipActions="{ record }">
+          <Button size="small" :type="record.completed ? 'default' : 'primary'" @click="openClip(record)">
+            {{ record.completed ? '重新校验' : '开始校验' }}
+          </Button>
+        </template>
+      </Table>
+    </Modal>
   </div>
 </template>
 
 <script lang="tsx" setup>
-import { computed, h, onMounted, reactive, ref } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { Button, Form, Input, InputNumber, Modal, Radio, Select, Space, Table, Tag } from 'ant-design-vue';
 import { getAllDataset, getModelPageApi } from '/@/api/business/models';
-import { createPreAnnotationApi, deletePreAnnotationApi, getPreAnnotationPageApi } from '/@/api/business/preAnnotation';
+import { createPreAnnotationApi, deletePreAnnotationApi, getPreAnnotationClipsApi, getPreAnnotationPageApi } from '/@/api/business/preAnnotation';
 import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
 import { goToTool } from '/@/utils/business';
 import { useMessage } from '/@/hooks/web/useMessage';
@@ -51,11 +60,17 @@ import { useMessage } from '/@/hooks/web/useMessage';
 const { createMessage, createConfirm } = useMessage();
 const records = ref<any[]>([]), datasets = ref<any[]>([]), models = ref<any[]>([]);
 const loading = ref(false), creating = ref(false), visible = ref(false);
+const clipVisible = ref(false), clipLoading = ref(false), clips = ref<any[]>([]), activeRecord = ref<any>();
 const pageNo = ref(1), pageSize = ref(10), total = ref(0);
 const form = reactive({ name: '', datasetIds: [] as number[], sourceMode: 'AI', modelId: undefined as number|undefined, iouThreshold: .5 });
 const colors:any = { STARTED:'blue', RUNNING:'cyan', READY:'green', FAILURE:'red', COMMITTED:'purple' };
 const sourceText:any = { AI:'AI 推理', V2V:'V2V 解析', HYBRID:'AI + V2V' };
-const open = (r:any) => goToTool({ datasetId:r.datasetId, dataId:r.dataIds?.[0], type:'readOnly', dataType:'frame', preAnnotationId:r.id, preAnnotation:'1' }, datasetTypeEnum.LIDAR_FUSION);
+async function selectClip(record:any){
+  activeRecord.value=record; clipVisible.value=true; clipLoading.value=true;
+  try { clips.value=await getPreAnnotationClipsApi(record.id) || []; }
+  finally { clipLoading.value=false; }
+}
+const openClip = (clip:any) => goToTool({ datasetId:activeRecord.value.datasetId, dataId:clip.firstDataId, type:'readOnly', dataType:'frame', preAnnotationId:activeRecord.value.id, preAnnotation:'1' }, datasetTypeEnum.LIDAR_FUSION);
 const remove = (r:any) => createConfirm({ iconType:'warning', title:'删除该预标注任务？', onOk: async()=>{ await deletePreAnnotationApi(r.id); await load(); } });
 const columns:any[] = [
   { title:'任务', dataIndex:'name', width:180 }, { title:'数据集', dataIndex:'datasetName', width:220 },
@@ -67,6 +82,12 @@ const columns:any[] = [
     ]) },
   { title:'失败原因', dataIndex:'errorReason', width:260, ellipsis:true },
   { title:'操作', key:'actions', width:190, fixed:'right', slots:{ customRender:'actions' } },
+];
+const clipColumns:any[] = [
+  { title:'Clip', dataIndex:'sceneName', ellipsis:true },
+  { title:'校验进度', width:130, customRender:({record}:any)=>`${record.committedCount || 0}/${record.dataCount || 0}` },
+  { title:'状态', width:110, customRender:({record}:any)=>h(Tag,{color:record.completed?'green':'orange'},()=>record.completed?'已完成':'待校验') },
+  { title:'操作', key:'clipActions', width:120, slots:{ customRender:'clipActions' } },
 ];
 const pagination = computed(()=>({current:pageNo.value,pageSize:pageSize.value,total:total.value,showSizeChanger:true}));
 async function load(){ loading.value=true; try { const r=await getPreAnnotationPageApi({pageNo:pageNo.value,pageSize:pageSize.value}); records.value=r?.list||[]; total.value=r?.total||0; } finally { loading.value=false; } }
@@ -82,7 +103,9 @@ async function create(){
     visible.value=false; createMessage.success(`已创建 ${form.datasetIds.length} 个独立预标注任务`); await load();
   } finally { creating.value=false; }
 }
-onMounted(()=>{load();loadOptions();});
+async function refreshOnFocus(){ await load(); if(clipVisible.value && activeRecord.value) await selectClip(activeRecord.value); }
+onMounted(()=>{load();loadOptions();window.addEventListener('focus',refreshOnFocus);});
+onBeforeUnmount(()=>window.removeEventListener('focus',refreshOnFocus));
 </script>
 
 <style scoped lang="less">

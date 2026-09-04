@@ -148,6 +148,7 @@ export default function useHeader() {
             await editor.saveObject(editor.state.frames, true);
             await api.commitPreAnnotation(bsState.query.preAnnotationId, editor.state.frames.map((frame) => frame.id));
             editor.showMsg('success', '当前 clip 真值已写回源数据目录');
+            await unlockData();
         } catch (error: any) {
             editor.handleErr(error, '提交真值失败');
         } finally {
