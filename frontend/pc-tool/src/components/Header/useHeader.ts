@@ -476,9 +476,22 @@ export default function useHeader() {
                     enterRecord(recordId);
                     return;
                 }
-                editor.showMsg('warning', 'You have another clip occupied');
-                bsState.modifying = false;
-                return;
+                if (isPreAnnotationReview.value) {
+                    const releasePrevious = await editor.showConfirm({
+                        title: '切换人工校验 Clip',
+                        subTitle: '你还有另一个 Clip 处于占用状态。是否释放之前的占用并切换到当前 Clip？已保存和已提交的真值不会丢失。',
+                        okText: '释放并切换',
+                    }).then(() => true).catch(() => false);
+                    if (!releasePrevious) {
+                        bsState.modifying = false;
+                        return;
+                    }
+                    await api.unlockRecord(String(recordId));
+                } else {
+                    editor.showMsg('warning', 'You have another clip occupied');
+                    bsState.modifying = false;
+                    return;
+                }
             }
 
             let data = await api.annotateData(config);
