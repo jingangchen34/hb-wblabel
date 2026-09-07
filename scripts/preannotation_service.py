@@ -2,7 +2,7 @@
 """Independent AI/V2V pre-annotation and atomic ground-truth commit service."""
 from __future__ import annotations
 
-import argparse, base64, csv, hashlib, json, math, os, shutil, subprocess, tempfile, time
+import argparse, base64, bisect, csv, hashlib, json, math, os, shutil, subprocess, tempfile, time
 from collections import defaultdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -147,10 +147,48 @@ def box_from_v2v(row: dict[str, str], data_id: int, index: int,
     box = {"id": f"V2V-{data_id}-{index}", "label": label, "confidence": 1.0,
            "x": center[0], "y": center[1], "z": center[2], "dx": length, "dy": width, "dz": height,
            "rotX": 0.0, "rotY": 0.0, "rotZ": heading, "source": "V2V",
-           "vehicleId": vehicle_id, "v2vTimestampNs": int(row.get("frame_timestamp_ns") or row.get("box_timestamp_ns") or 0)}
+           "vehicleId": vehicle_id, "v2vTimestampNs": int(row.get("box_timestamp_ns") or row.get("frame_timestamp_ns") or 0)}
     if track_id:
         box.update({"trackId": track_id, "trackID": track_id, "TrackID": track_id, "trackName": track_name or track_id})
     return box
+
+
+def v2v_row_timestamp(row: dict[str, str]) -> int:
+    try:
+        return int(row.get("box_timestamp_ns") or row.get("frame_timestamp_ns") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def index_v2v_rows(rows: list[dict[str, str]]) -> dict[str, list[tuple[int, dict[str, str]]]]:
+    """Index one time series per vehicle and collapse exact duplicate samples."""
+    grouped: dict[str, dict[int, dict[str, str]]] = defaultdict(dict)
+    for row_index, row in enumerate(rows):
+        timestamp = v2v_row_timestamp(row)
+        if timestamp <= 0:
+            continue
+        vehicle_id = str(row.get("vehicle_id") or "").strip() or f"box-{row_index}"
+        grouped[vehicle_id].setdefault(timestamp, row)
+    return {
+        vehicle_id: sorted(samples.items())
+        for vehicle_id, samples in grouped.items()
+    }
+
+
+def nearest_v2v_rows(index: dict[str, list[tuple[int, dict[str, str]]]], timestamp: int,
+                     max_gap_ns: int = MAX_V2V_GAP_NS) -> list[tuple[str, int, dict[str, str]]]:
+    result = []
+    for vehicle_id in sorted(index):
+        samples = index[vehicle_id]
+        timestamps = [item[0] for item in samples]
+        offset = bisect.bisect_left(timestamps, timestamp)
+        candidates = samples[max(0, offset - 1):offset + 1]
+        if not candidates:
+            continue
+        nearest = min(candidates, key=lambda item: abs(item[0] - timestamp))
+        if not timestamp or abs(nearest[0] - timestamp) <= max_gap_ns:
+            result.append((vehicle_id, nearest[0], nearest[1]))
+    return result
 
 
 def load_v2v(frames: dict[int, dict[str, Any]]) -> dict[str, list[dict]]:
@@ -160,22 +198,16 @@ def load_v2v(frames: dict[int, dict[str, Any]]) -> dict[str, list[dict]]:
         if not item: result[str(frame["id"])] = []; continue
         path = safe_path(item["path"])
         if path not in csv_cache:
-            with path.open(encoding="utf-8-sig", newline="") as stream: csv_cache[path] = list(csv.DictReader(stream))
-            vehicles = sorted({str(row.get("vehicle_id") or "").strip() for row in csv_cache[path] if str(row.get("vehicle_id") or "").strip()})
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                csv_cache[path] = index_v2v_rows(list(csv.DictReader(stream)))
+            vehicles = sorted(csv_cache[path])
             track_cache[path] = {vehicle_id: str(index + 1) for index, vehicle_id in enumerate(vehicles)}
-        ts = timestamp_of(frame["name"]); grouped = defaultdict(list)
-        for row in csv_cache[path]:
-            try: grouped[int(row.get("frame_timestamp_ns") or row.get("box_timestamp_ns") or 0)].append(row)
-            except ValueError: pass
-        if not grouped: result[str(frame["id"])] = []; continue
-        nearest = min(grouped, key=lambda value: abs(value-ts)) if ts else min(grouped)
-        if ts and abs(nearest-ts) > MAX_V2V_GAP_NS: result[str(frame["id"])] = []; continue
+        ts = timestamp_of(frame["name"])
         boxes = []
-        for index,row in enumerate(grouped[nearest]):
-            vehicle_id = str(row.get("vehicle_id") or "").strip()
-            track_name = track_cache[path].get(vehicle_id, str(index + 1))
-            track_id = f"V2V:{frame['parentId']}:{vehicle_id or f'box-{index}'}"
-            box = box_from_v2v(row, frame["id"], index, track_id, track_name)
+        for box_index, (vehicle_id, _, row) in enumerate(nearest_v2v_rows(csv_cache[path], ts)):
+            track_name = track_cache[path].get(vehicle_id, str(box_index + 1))
+            track_id = f"V2V:{frame['parentId']}:{vehicle_id}"
+            box = box_from_v2v(row, frame["id"], box_index, track_id, track_name)
             if box: boxes.append(box)
         result[str(frame["id"])] = boxes
     return result

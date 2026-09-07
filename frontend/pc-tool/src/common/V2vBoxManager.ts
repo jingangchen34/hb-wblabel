@@ -18,9 +18,8 @@ interface V2vBox {
     corners: THREE.Vector3[];
 }
 
-interface V2vFrame {
-    frameIndex: number;
-    timestampNs: number;
+interface V2vTrack {
+    vehicleId: string;
     boxes: V2vBox[];
 }
 
@@ -53,16 +52,16 @@ function parseTimestamp(value: string | undefined) {
     return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-export function parseV2vCsv(text: string): V2vFrame[] {
+export function parseV2vCsv(text: string): V2vTrack[] {
     const lines = text.split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) return [];
     const headers = parseCsvLine(lines[0]);
-    const frames = new Map<string, V2vFrame>();
+    const tracks = new Map<string, Map<string, V2vBox>>();
 
-    lines.slice(1).forEach((line) => {
+    lines.slice(1).forEach((line, lineIndex) => {
         const values = parseCsvLine(line);
         const row = Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
-        const timestampNs = parseTimestamp(row.frame_timestamp_ns || row.box_timestamp_ns);
+        const timestampNs = parseTimestamp(row.box_timestamp_ns || row.frame_timestamp_ns);
         if (timestampNs <= 0) return;
         const height = Number(row.height_m);
         const zOffset = Number.isFinite(height) ? height / 2 : 0;
@@ -76,21 +75,22 @@ export function parseV2vCsv(text: string): V2vFrame[] {
         });
         if (corners.some((point) => !Number.isFinite(point.x + point.y + point.z))) return;
         const frameIndex = Number.parseInt(row.frame_index || '-1', 10);
-        const key = String(timestampNs);
-        const frame = frames.get(key) || { frameIndex, timestampNs, boxes: [] };
-        frame.boxes.push({
+        const vehicleId = row.vehicle_id || `unknown-${lineIndex}`;
+        const track = tracks.get(vehicleId) || new Map<string, V2vBox>();
+        track.set(String(timestampNs), {
             frameIndex,
             timestampNs,
-            vehicleId: row.vehicle_id || 'unknown',
+            vehicleId,
             truckType: row.truck_type || 'unknown',
             corners,
         });
-        frames.set(key, frame);
+        tracks.set(vehicleId, track);
     });
 
-    return Array.from(frames.values()).sort((left, right) =>
-        left.timestampNs < right.timestampNs ? -1 : left.timestampNs > right.timestampNs ? 1 : 0,
-    );
+    return Array.from(tracks, ([vehicleId, boxes]) => ({
+        vehicleId,
+        boxes: Array.from(boxes.values()).sort((left, right) => left.timestampNs - right.timestampNs),
+    })).sort((left, right) => left.vehicleId.localeCompare(right.vehicleId));
 }
 
 function timestampFromPointName(name?: string) {
@@ -98,23 +98,25 @@ function timestampFromPointName(name?: string) {
     return match ? parseTimestamp(match[1]) : 0;
 }
 
-function findNearestFrame(frames: V2vFrame[], timestampNs: number, frameIndex: number) {
-    if (!frames.length) return undefined;
-    if (timestampNs <= 0) {
-        const frame = frames.find((item) => item.frameIndex === frameIndex);
-        return frame ? { frame, gap: 0 } : undefined;
-    }
-    let nearest = frames[0];
-    let gap = Math.abs(nearest.timestampNs - timestampNs);
-    for (let index = 1; index < frames.length; index += 1) {
-        const candidate = frames[index];
-        const candidateGap = Math.abs(candidate.timestampNs - timestampNs);
-        if (candidateGap < gap) {
-            nearest = candidate;
-            gap = candidateGap;
+function findNearestBoxes(tracks: V2vTrack[], timestampNs: number, frameIndex: number) {
+    return tracks.flatMap((track) => {
+        if (!track.boxes.length) return [];
+        if (timestampNs <= 0) {
+            const box = track.boxes.find((item) => item.frameIndex === frameIndex);
+            return box ? [{ box, gap: 0 }] : [];
         }
-    }
-    return gap <= MAX_TIMESTAMP_GAP_NS ? { frame: nearest, gap } : undefined;
+        let nearest = track.boxes[0];
+        let gap = Math.abs(nearest.timestampNs - timestampNs);
+        for (let index = 1; index < track.boxes.length; index += 1) {
+            const candidate = track.boxes[index];
+            const candidateGap = Math.abs(candidate.timestampNs - timestampNs);
+            if (candidateGap < gap) {
+                nearest = candidate;
+                gap = candidateGap;
+            }
+        }
+        return gap <= MAX_TIMESTAMP_GAP_NS ? [{ box: nearest, gap }] : [];
+    });
 }
 
 function createLabel(box: V2vBox, gapNs: number) {
@@ -149,7 +151,7 @@ function createLabel(box: V2vBox, gapNs: number) {
 export default class V2vBoxManager {
     private editor: Editor;
     private group = new THREE.Group();
-    private csvCache = new Map<string, Promise<V2vFrame[]>>();
+    private csvCache = new Map<string, Promise<V2vTrack[]>>();
 
     constructor(editor: Editor) {
         this.editor = editor;
@@ -190,16 +192,14 @@ export default class V2vBoxManager {
         if (!resource?.v2vUrl) return;
 
         try {
-            const frames = await this.load(resource.v2vUrl);
+            const tracks = await this.load(resource.v2vUrl);
             if (this.editor.getCurrentFrame()?.id !== frameId) return;
-            const match = findNearestFrame(
-                frames,
+            const matches = findNearestBoxes(
+                tracks,
                 timestampFromPointName(resource.name),
                 this.editor.state.frameIndex,
             );
-            if (!match) return;
-
-            match.frame.boxes.forEach((box) => {
+            matches.forEach(({ box, gap }) => {
                 const positions: number[] = [];
                 BOX_EDGES.forEach((cornerIndex) => {
                     const point = box.corners[cornerIndex];
@@ -218,7 +218,7 @@ export default class V2vBoxManager {
                 wireframe.userData = { source: 'V2V', vehicleId: box.vehicleId, truckType: box.truckType };
                 this.group.add(wireframe);
 
-                const label = createLabel(box, match.gap);
+                const label = createLabel(box, gap);
                 if (label) this.group.add(label);
             });
             this.editor.pc.render();
