@@ -5,10 +5,10 @@ from __future__ import annotations
 import argparse, base64, bisect, csv, hashlib, json, math, os, shutil, subprocess, tempfile, time
 from collections import defaultdict
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 OK, ERROR = "OK", "ERROR"
@@ -19,6 +19,9 @@ MYSQL_USER = os.getenv("XTREME1_MYSQL_USER", "xtreme1")
 MYSQL_PASSWORD = os.getenv("XTREME1_MYSQL_PASSWORD", "Rc4K3L6f")
 MYSQL_DATABASE = os.getenv("XTREME1_MYSQL_DATABASE", "xtreme1")
 MAX_V2V_GAP_NS = int(os.getenv("PREANNOTATION_V2V_MAX_GAP_NS", "500000000"))
+FUSIONDET_ROOT = Path(os.getenv("FUSIONDET_ROOT", "/home/user/cjg/code/fusiondet")).resolve()
+FUSIONDET_PYTHON = Path(os.getenv("FUSIONDET_PYTHON", "/home/user/anaconda3/envs/sanet_deploy/bin/python")).resolve()
+FUSIONDET_SCRIPT = (FUSIONDET_ROOT / "tools/misc/sanet_infer.py").resolve()
 
 
 def mysql_rows(sql: str) -> list[list[str]]:
@@ -70,6 +73,10 @@ def safe_path(raw: str) -> Path:
 
 def artifact_path(url: str) -> Path | None:
     raw = urlparse(str(url)).path.replace("\\", "/")
+    work_marker = "/preannotation-artifacts/"
+    if work_marker in raw:
+        resolved = (WORK_ROOT / raw.split(work_marker, 1)[1]).resolve()
+        return resolved if resolved != WORK_ROOT and WORK_ROOT in resolved.parents else None
     marker = "/external-data/"
     if marker not in raw: return None
     try: return safe_path(raw.split(marker, 1)[1])
@@ -85,7 +92,8 @@ def resource(frame: dict[str, Any], pattern: str, suffix: str = "") -> dict[str,
 
 
 def point_item(frame):
-    return resource(frame, "point_cloud", ".bin") or resource(frame, "point_cloud", ".pcd")
+    return (resource(frame, "point_cloud", ".bin") or resource(frame, "lidar_car", ".bin")
+            or resource(frame, "point_cloud", ".pcd") or resource(frame, "lidar_car", ".pcd"))
 
 
 def clip_root_from_point(path: Path) -> Path:
@@ -123,6 +131,105 @@ def call_ai(model_url: str, frames: dict[int, dict[str, Any]]) -> tuple[dict[str
         artifact = {k + "Url": v for k, v in outputs.items() if k in {"occ", "label", "npz"}}
         if artifact: occ[data_id] = artifact
     return predictions, occ
+
+
+def fusiondet_file(raw: str, suffixes: tuple[str, ...]) -> Path:
+    if not raw:
+        raise ValueError("FusionDet config and checkpoint are required")
+    path = Path(raw)
+    resolved = (path if path.is_absolute() else FUSIONDET_ROOT / path).resolve()
+    if resolved != FUSIONDET_ROOT and FUSIONDET_ROOT not in resolved.parents:
+        raise ValueError(f"FusionDet path escapes repository: {raw}")
+    if resolved.suffix.lower() not in suffixes or not resolved.is_file():
+        raise ValueError(f"FusionDet file does not exist or has invalid type: {resolved}")
+    return resolved
+
+
+def artifact_url(path: Path) -> str:
+    return "/preannotation-artifacts/" + path.resolve().relative_to(WORK_ROOT).as_posix()
+
+
+def parse_fusiondet_outputs(output: Path, data_ids: list[int]) -> tuple[dict[str, list[dict]], dict[str, dict]]:
+    predictions: dict[str, list[dict]] = {str(data_id): [] for data_id in data_ids}
+    occ: dict[str, dict] = {}
+    for data_id in data_ids:
+        key = str(data_id)
+        det_path = output / "det" / f"{key}.json"
+        if det_path.is_file():
+            document = json.loads(det_path.read_text(encoding="utf-8-sig"))
+            for index, obj in enumerate(document.get("objects") or []):
+                translation, size = obj.get("translation") or [], obj.get("size") or []
+                if len(translation) < 3 or len(size) < 3:
+                    continue
+                dz = float(size[2])
+                predictions[key].append({
+                    "id": f"AI-{key}-{index}", "source": "AI",
+                    "label": obj.get("category") or obj.get("label") or "unknown",
+                    "confidence": float(obj.get("confidence", obj.get("score", 1.0)) or 0),
+                    "x": float(translation[0]), "y": float(translation[1]),
+                    # MMDetection3D LiDAR boxes use a bottom-center z origin.
+                    "z": float(translation[2]) + dz / 2.0,
+                    "dx": float(size[0]), "dy": float(size[1]), "dz": dz,
+                    "rotX": 0.0, "rotY": 0.0,
+                    "rotZ": float(obj.get("yaw", obj.get("heading", 0.0)) or 0),
+                })
+        artifact = {}
+        for name, suffix in (("label", ".label"), ("npz", ".npz")):
+            path = output / "occ" / f"{key}{suffix}"
+            if path.is_file():
+                artifact[name + "Url"] = artifact_url(path)
+        if artifact:
+            occ[key] = artifact
+    return predictions, occ
+
+
+def call_fusiondet(payload: dict[str, Any], frames: dict[int, dict[str, Any]]) -> tuple[dict[str, list[dict]], dict[str, dict]]:
+    config = fusiondet_file(str(payload.get("configPath") or ""), (".py",))
+    checkpoint = fusiondet_file(str(payload.get("checkpointPath") or ""), (".pth", ".pt", ".ckpt"))
+    load_dim = int(payload.get("sourcePointDim") or 6)
+    use_dim = int(payload.get("modelInputDim") or 4)
+    if load_dim < 3 or use_dim < 3 or use_dim > load_dim:
+        raise ValueError(f"Invalid point dimensions: load_dim={load_dim}, use_dim={use_dim}")
+    if not FUSIONDET_PYTHON.is_file() or not FUSIONDET_SCRIPT.is_file():
+        raise ValueError("FusionDet Python or sanet_infer.py does not exist")
+
+    job = int(payload["preAnnotationId"])
+    work = WORK_ROOT / f"job_{job}"
+    input_dir, output_dir = work / "input", work / "infer"
+    for directory in (input_dir, output_dir):
+        if directory.exists():
+            shutil.rmtree(directory)
+        directory.mkdir(parents=True)
+    selected_ids = []
+    for data_id, frame in frames.items():
+        point = point_item(frame)
+        if not point:
+            continue
+        source = safe_path(str(point["path"]))
+        if source.suffix.lower() not in {".bin", ".npy"}:
+            continue
+        target = input_dir / f"{data_id}{source.suffix.lower()}"
+        target.symlink_to(source)
+        selected_ids.append(data_id)
+    if not selected_ids:
+        raise ValueError("No FusionDet-compatible .bin/.npy point clouds were found")
+
+    command = [str(FUSIONDET_PYTHON), str(FUSIONDET_SCRIPT),
+               "--config", str(config), "--checkpoint", str(checkpoint),
+               "--data_root", str(input_dir), "--load_dim", str(load_dim),
+               "--use_dim", str(use_dim), "--model_type", "point",
+               "--out_dir", str(output_dir), "--save_occ", "--no_save_pcd",
+               "--donot_save_img", "--no_with_gt"]
+    log_path = work / "preannotation.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        log.write("Command: " + " ".join(command) + "\n\n")
+        log.flush()
+        result = subprocess.run(command, cwd=FUSIONDET_ROOT, stdout=log,
+                                stderr=subprocess.STDOUT, text=True)
+    if result.returncode:
+        tail = log_path.read_text(encoding="utf-8", errors="replace")[-8000:]
+        raise RuntimeError(f"FusionDet inference failed (exit {result.returncode}):\n{tail}")
+    return parse_fusiondet_outputs(output_dir, selected_ids)
 
 
 def timestamp_of(name: str) -> int:
@@ -501,7 +608,11 @@ def commit(payload):
 def preannotate(payload):
     job=int(payload["preAnnotationId"]); ids=[int(x) for x in payload.get("dataIds") or []]; mode=str(payload.get("sourceMode") or "AI").upper()
     frames=load_frames(ids); ai,occ,v2v={},{},{}
-    if mode in {"AI","HYBRID"}: ai,occ=call_ai(str(payload.get("modelUrl") or ""),frames)
+    if mode in {"AI","HYBRID"}:
+        if payload.get("configPath") or payload.get("checkpointPath"):
+            ai,occ=call_fusiondet(payload,frames)
+        else:
+            ai,occ=call_ai(str(payload.get("modelUrl") or ""),frames)
     if mode in {"V2V","HYBRID"}: v2v=load_v2v(frames)
     predictions=ai if mode=="AI" else v2v if mode=="V2V" else fuse(ai,v2v,float(payload.get("iouThreshold") or .5))
     work=WORK_ROOT/f"job_{job}"; work.mkdir(parents=True,exist_ok=True); output=work/"draft.json"
@@ -514,7 +625,27 @@ def respond(handler,status,body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self): respond(self,HTTPStatus.OK,{"code":OK,"message":"ok"}) if self.path=="/health" else respond(self,HTTPStatus.NOT_FOUND,{"code":ERROR,"message":"not found"})
+    def do_GET(self):
+        if self.path == "/health":
+            respond(self,HTTPStatus.OK,{"code":OK,"message":"ok"})
+            return
+        if self.path.startswith("/artifacts/"):
+            try:
+                relative = unquote(urlparse(self.path).path.split("/artifacts/", 1)[1])
+                target = (WORK_ROOT / relative).resolve()
+                if target == WORK_ROOT or WORK_ROOT not in target.parents or not target.is_file():
+                    raise FileNotFoundError(relative)
+                raw = target.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(raw)
+            except (ValueError, FileNotFoundError):
+                respond(self,HTTPStatus.NOT_FOUND,{"code":ERROR,"message":"not found"})
+            return
+        respond(self,HTTPStatus.NOT_FOUND,{"code":ERROR,"message":"not found"})
     def do_POST(self):
         try:
             payload=json.loads(self.rfile.read(int(self.headers.get("Content-Length","0"))) or b"{}")
@@ -527,7 +658,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument("--host",default="0.0.0.0"); parser.add_argument("--port",type=int,default=8520); args=parser.parse_args()
-    WORK_ROOT.mkdir(parents=True,exist_ok=True); print(f"Pre-annotation service listening on {args.host}:{args.port}",flush=True); HTTPServer((args.host,args.port),Handler).serve_forever()
+    WORK_ROOT.mkdir(parents=True,exist_ok=True); print(f"Pre-annotation service listening on {args.host}:{args.port}",flush=True); ThreadingHTTPServer((args.host,args.port),Handler).serve_forever()
 
 
 if __name__=="__main__": main()

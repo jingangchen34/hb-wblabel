@@ -30,6 +30,21 @@
             <Select.Option v-for="item in models" :key="item.id" :value="Number(item.id)" :label="item.name">{{ item.name }}</Select.Option>
           </Select>
         </Form.Item>
+        <template v-if="form.sourceMode !== 'V2V' && isFusionDetModel">
+          <Form.Item label="FusionDet Config" required>
+            <AutoComplete v-model:value="form.configPath" :options="configOptions" placeholder="选择或输入服务器上的 config 绝对路径" />
+          </Form.Item>
+          <Form.Item label="FusionDet 权重" required>
+            <AutoComplete v-model:value="form.checkpointPath" :options="checkpointOptions" placeholder="选择或输入服务器上的 checkpoint 绝对路径" />
+          </Form.Item>
+          <Form.Item label="点云维度">
+            <InputNumber v-model:value="form.sourcePointDim" :min="3" :max="16" />
+            <span class="hint">源文件维度（all_test 原始 bin 为 6）</span>
+            <InputNumber v-model:value="form.modelInputDim" :min="3" :max="16" style="margin-left:16px" />
+            <span class="hint">模型使用维度（当前模型为 4）</span>
+          </Form.Item>
+          <div v-if="form.configPath.includes('occ-only')" class="config-warning">当前 config 是 OCC-only：会生成 OCC 标签，但不一定生成 3D 检测框。OD+OCC 请改选多任务 config。</div>
+        </template>
         <Form.Item v-if="form.sourceMode === 'HYBRID'" label="V2V 优先 IoU 阈值">
           <InputNumber v-model:value="form.iouThreshold" :min="0" :max="1" :step="0.05" />
           <span class="hint">匹配 IoU 大于此值时采用 V2V 框；未匹配框均保留。</span>
@@ -50,7 +65,7 @@
 
 <script lang="tsx" setup>
 import { computed, h, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { Button, Form, Input, InputNumber, Modal, Radio, Select, Space, Table, Tag } from 'ant-design-vue';
+import { AutoComplete, Button, Form, Input, InputNumber, Modal, Radio, Select, Space, Table, Tag } from 'ant-design-vue';
 import { getAllDataset, getModelPageApi } from '/@/api/business/models';
 import { createPreAnnotationApi, deletePreAnnotationApi, getPreAnnotationClipsApi, getPreAnnotationPageApi } from '/@/api/business/preAnnotation';
 import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
@@ -62,7 +77,14 @@ const records = ref<any[]>([]), datasets = ref<any[]>([]), models = ref<any[]>([
 const loading = ref(false), creating = ref(false), visible = ref(false);
 const clipVisible = ref(false), clipLoading = ref(false), clips = ref<any[]>([]), activeRecord = ref<any>();
 const pageNo = ref(1), pageSize = ref(10), total = ref(0);
-const form = reactive({ name: '', datasetIds: [] as number[], sourceMode: 'AI', modelId: undefined as number|undefined, iouThreshold: .5 });
+const defaultConfig = '/home/user/cjg/code/fusiondet/configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-dataset-all-occ-only.py';
+const defaultCheckpoint = '/home/user/cjg/code/fusiondet/work_dirs/dataset_all_occ/epoch_20_ema.pth';
+const configOptions = [{ value: defaultConfig }];
+const checkpointOptions = [{ value: defaultCheckpoint }];
+const form = reactive({ name: '', datasetIds: [] as number[], sourceMode: 'AI', modelId: undefined as number|undefined, iouThreshold: .5,
+  configPath: defaultConfig, checkpointPath: defaultCheckpoint, sourcePointDim: 6, modelInputDim: 4 });
+const selectedModel = computed(()=>models.value.find((item:any)=>Number(item.id)===Number(form.modelId)));
+const isFusionDetModel = computed(()=>/fusiondet|sanet/i.test(`${selectedModel.value?.name || ''} ${selectedModel.value?.version || ''}`));
 const colors:any = { STARTED:'blue', RUNNING:'cyan', READY:'green', FAILURE:'red', COMMITTED:'purple' };
 const sourceText:any = { AI:'AI 推理', V2V:'V2V 解析', HYBRID:'AI + V2V' };
 async function selectClip(record:any){
@@ -98,8 +120,10 @@ async function loadOptions(){
 }
 async function create(){
   if(!form.datasetIds.length){createMessage.warning('请选择数据集');return;} if(form.sourceMode!=='V2V'&&!form.modelId){createMessage.warning('请选择推理模型');return;}
+  if(isFusionDetModel.value && (!form.configPath || !form.checkpointPath)){createMessage.warning('请选择 FusionDet config 和权重');return;}
   creating.value=true; try {
-    await Promise.all(form.datasetIds.map((datasetId)=>createPreAnnotationApi({...form,datasetIds:[datasetId]})));
+    const inference = isFusionDetModel.value ? {} : {configPath:undefined,checkpointPath:undefined,sourcePointDim:undefined,modelInputDim:undefined};
+    await Promise.all(form.datasetIds.map((datasetId)=>createPreAnnotationApi({...form,...inference,datasetIds:[datasetId]})));
     visible.value=false; createMessage.success(`已创建 ${form.datasetIds.length} 个独立预标注任务`); await load();
   } finally { creating.value=false; }
 }
@@ -109,5 +133,5 @@ onBeforeUnmount(()=>window.removeEventListener('focus',refreshOnFocus));
 </script>
 
 <style scoped lang="less">
-.preannotation-page{padding:24px}.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.toolbar h2{margin:0 0 4px;font-size:22px}.toolbar p{margin:0;color:#7b8494}.toolbar button{margin-left:8px}.hint{margin-left:10px;color:#8c8c8c}
+.preannotation-page{padding:24px}.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.toolbar h2{margin:0 0 4px;font-size:22px}.toolbar p{margin:0;color:#7b8494}.toolbar button{margin-left:8px}.hint{margin-left:10px;color:#8c8c8c}.config-warning{margin:-10px 0 18px;color:#d48806}
 </style>
