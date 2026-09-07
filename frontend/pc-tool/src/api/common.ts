@@ -149,9 +149,16 @@ function normalizePreAnnotationObject(item: any, dataId: string, index: number):
 }
 
 export async function getPreAnnotationFrames(preAnnotationId: string | number, dataIds: string[]) {
-    const args = queryStr({ dataIds });
-    const res: any = await get(`/api/preAnnotation/${preAnnotationId}/data?${args}`);
-    return res?.data || res || [];
+    const uniqueDataIds = Array.from(new Set(dataIds.map(String)));
+    const batchSize = 40;
+    const frames: any[] = [];
+    for (let offset = 0; offset < uniqueDataIds.length; offset += batchSize) {
+        const batchIds = uniqueDataIds.slice(offset, offset + batchSize);
+        const args = queryStr({ dataIds: batchIds });
+        const res: any = await get(`/api/preAnnotation/${preAnnotationId}/data?${args}`);
+        frames.push(...(res?.data || res || []));
+    }
+    return frames;
 }
 
 export async function getPreAnnotationObjectsMap(preAnnotationId: string | number, dataIds: string[]) {

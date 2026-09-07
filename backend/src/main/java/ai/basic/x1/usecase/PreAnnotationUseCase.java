@@ -83,17 +83,23 @@ public class PreAnnotationUseCase {
 
     public PreAnnotationFrameDTO frame(Long id, Long dataId) {
         var record = requireRecord(id);
+        return frame(record, id, dataId);
+    }
+
+    private PreAnnotationFrameDTO frame(PreAnnotationRecord record, Long id, Long dataId) {
         var predictions = new ArrayList<cn.hutool.json.JSONObject>();
-        if (record.getPredictions() != null && record.getPredictions().getJSONArray(String.valueOf(dataId)) != null)
-            record.getPredictions().getJSONArray(String.valueOf(dataId)).forEach(v -> predictions.add(JSONUtil.parseObj(v)));
+        var framePredictions = record.getPredictions() == null
+                ? null : record.getPredictions().getJSONArray(String.valueOf(dataId));
+        if (framePredictions != null)
+            framePredictions.forEach(v -> predictions.add(JSONUtil.parseObj(v)));
         var occ = record.getOccArtifacts() == null ? null : record.getOccArtifacts().getJSONObject(String.valueOf(dataId));
         return PreAnnotationFrameDTO.builder().preAnnotationId(id).dataId(dataId).predictions(predictions).occArtifact(occ).build();
     }
 
     public List<PreAnnotationFrameDTO> frames(Long id, List<Long> dataIds) {
-        requireRecord(id);
+        var record = requireRecord(id);
         if (CollUtil.isEmpty(dataIds)) return List.of();
-        return dataIds.stream().distinct().map(dataId -> frame(id, dataId)).collect(Collectors.toList());
+        return dataIds.stream().distinct().map(dataId -> frame(record, id, dataId)).collect(Collectors.toList());
     }
 
     public List<PreAnnotationClipDTO> clips(Long id) {
