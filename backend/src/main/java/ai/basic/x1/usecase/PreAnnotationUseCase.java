@@ -151,13 +151,21 @@ public class PreAnnotationUseCase {
         var labels = new cn.hutool.json.JSONObject();
         for (var dataId : commitIds) {
             try {
-                var bytes = pointLabelUseCase.getLabels(dataId);
+                var bytes = pointLabelUseCase.getPreAnnotationLabels(id, dataId);
                 if (bytes.length > 0) labels.set(String.valueOf(dataId), Base64.getEncoder().encodeToString(bytes));
             } catch (Exception ignored) { }
         }
         var payload = new cn.hutool.json.JSONObject().set("preAnnotationId", id)
                 .set("dataIds", commitIds).set("occLabels", labels);
         var data = post("/commit", payload, 60 * 60 * 1000);
+        var occFiles = data.getJSONObject("occFiles");
+        if (occFiles != null) {
+            for (var entry : occFiles.entrySet()) {
+                var item = JSONUtil.parseObj(entry.getValue());
+                pointLabelUseCase.syncExternalLabelResource(Long.valueOf(entry.getKey()),
+                        item.getStr("path"), item.getLong("size", 0L), userId);
+            }
+        }
         var committed = new LinkedHashSet<Long>();
         if (record.getCommittedDataIds() != null) record.getCommittedDataIds().forEach(v -> committed.add(Long.valueOf(String.valueOf(v))));
         committed.addAll(commitIds);

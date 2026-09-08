@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 import preannotation_service
-from preannotation_service import index_v2v_rows, nearest_v2v_rows, parse_fusiondet_outputs, v2v_row_timestamp
+from preannotation_service import index_v2v_rows, nearest_v2v_rows, occ_label_target, parse_fusiondet_outputs, v2v_row_timestamp
 
 
 class V2vTimestampTest(unittest.TestCase):
@@ -37,6 +37,14 @@ class V2vTimestampTest(unittest.TestCase):
 
 
 class FusionDetOutputTest(unittest.TestCase):
+    def test_occ_target_uses_clip_timestamp_layout(self) -> None:
+        clip = Path("/data/all_test/7cam/clip")
+        point = clip / "lidars/LIDAR_CAR/LIDAR_123.bin"
+        self.assertEqual(
+            occ_label_target(clip, point),
+            clip / "anno/occ_labels/LIDAR_CAR/LIDAR_123.label",
+        )
+
     def test_parses_detection_and_occ_artifacts(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
             root = Path(directory)

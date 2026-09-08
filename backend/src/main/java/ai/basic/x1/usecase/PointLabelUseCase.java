@@ -52,11 +52,20 @@ public class PointLabelUseCase {
         return Files.readAllBytes(path);
     }
 
+    public byte[] getPreAnnotationLabels(Long preAnnotationId, Long dataId) throws IOException {
+        var path = preAnnotationLabelPath(preAnnotationId, dataId);
+        return Files.exists(path) ? Files.readAllBytes(path) : new byte[0];
+    }
+
     public void saveLabels(PointLabelSaveDTO saveDTO) throws IOException {
-        Files.createDirectories(root());
+        var preAnnotationId = saveDTO.getPreAnnotationId();
+        var path = preAnnotationId == null
+                ? labelPath(saveDTO.getDataId())
+                : preAnnotationLabelPath(preAnnotationId, saveDTO.getDataId());
+        Files.createDirectories(path.getParent());
         var labels = Base64.getDecoder().decode(saveDTO.getLabelsBase64());
-        Files.write(labelPath(saveDTO.getDataId()), labels);
-        syncLabelResourceQuietly(saveDTO.getDataId(), labels);
+        Files.write(path, labels);
+        if (preAnnotationId == null) syncLabelResourceQuietly(saveDTO.getDataId(), labels);
     }
 
     public void patchLabels(PointLabelPatchDTO patchDTO) throws IOException {
@@ -123,6 +132,43 @@ public class PointLabelUseCase {
         return root().resolve(dataId + ".label");
     }
 
+    private Path preAnnotationLabelPath(Long preAnnotationId, Long dataId) throws IOException {
+        if (preAnnotationId == null || preAnnotationId <= 0 || dataId == null || dataId <= 0) {
+            throw new IOException("Invalid pre-annotation or data id");
+        }
+        return root().resolve("preannotation-" + preAnnotationId).resolve(dataId + ".label");
+    }
+
+    public void syncExternalLabelResource(Long dataId, String relativePath, long size, Long userId) {
+        var normalized = Path.of(relativePath == null ? "" : relativePath).normalize();
+        if (normalized.isAbsolute() || normalized.startsWith("..") || !normalized.toString().endsWith(".label")) {
+            throw new IllegalArgumentException("Invalid external OCC label path: " + relativePath);
+        }
+        var files = fileUseCase.saveBatchFile(userId, List.of(FileBO.builder()
+                .name(normalized.getFileName().toString())
+                .originalName(normalized.getFileName().toString())
+                .path(normalized.toString().replace('\\', '/'))
+                .type("application/octet-stream")
+                .size(size)
+                .bucketName("external-data")
+                .build()));
+        if (CollectionUtil.isEmpty(files)) return;
+        attachLabelResource(dataId, files.get(0).getId(), normalized.getFileName().toString());
+    }
+
+    private void attachLabelResource(Long dataId, Long fileId, String name) {
+        var dataInfo = dataInfoDAO.getById(dataId);
+        if (dataInfo == null) return;
+        var content = normalizeContent(dataInfo.getContent());
+        content.removeIf(node -> "occ_label".equalsIgnoreCase(node.getName()));
+        content.add(DataInfo.FileNode.builder()
+                .name("occ_label").type("directory")
+                .files(List.of(DataInfo.FileNode.builder()
+                        .name(name).type("file").fileId(fileId).build()))
+                .build());
+        dataInfoDAO.updateById(DataInfo.builder().id(dataId).content(content).build());
+    }
+
     private void syncLabelResourceQuietly(Long dataId, byte[] labels) {
         try {
             syncLabelResource(dataId, labels);
@@ -165,22 +211,7 @@ public class PointLabelUseCase {
         if (CollectionUtil.isEmpty(files)) return;
 
         var fileId = files.get(0).getId();
-        var content = normalizeContent(dataInfo.getContent());
-        content.removeIf(node -> "occ_label".equalsIgnoreCase(node.getName()));
-        content.add(DataInfo.FileNode.builder()
-                .name("occ_label")
-                .type("directory")
-                .files(List.of(DataInfo.FileNode.builder()
-                        .name(dataId + ".label")
-                        .type("file")
-                        .fileId(fileId)
-                        .build()))
-                .build());
-
-        dataInfoDAO.updateById(DataInfo.builder()
-                .id(dataId)
-                .content(content)
-                .build());
+        attachLabelResource(dataId, fileId, dataId + ".label");
         log.info("Synced point label resource, dataId={}, fileId={}, labelBytes={}", dataId, fileId, labels.length);
     }
 
@@ -236,4 +267,3 @@ public class PointLabelUseCase {
         return Long.valueOf(String.valueOf(value));
     }
 }
-

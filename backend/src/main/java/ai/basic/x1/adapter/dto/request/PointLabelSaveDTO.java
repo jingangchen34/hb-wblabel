@@ -7,8 +7,9 @@ public class PointLabelSaveDTO {
 
     private Long dataId;
 
+    private Long preAnnotationId;
+
     private String frameId;
 
     private String labelsBase64;
 }
-

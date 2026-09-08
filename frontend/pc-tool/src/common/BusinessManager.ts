@@ -58,7 +58,10 @@ export default class BusinessManager extends BaseBusinessManager {
         let info = utils.createViewConfig(fileConfig, cameraInfo);
         logStep('createViewConfig', viewConfigStartedAt);
         const savedLabelStartedAt = performance.now();
-        const savedPointLabels = await api.getSavedPointLabels(data.id).catch(() => undefined);
+        const savedPointLabels = await api.getSavedPointLabels(
+            data.id,
+            this.editor.bsState.query.preAnnotationId,
+        ).catch(() => undefined);
         logStep('getSavedPointLabel', savedLabelStartedAt);
         let preAnnotationOcc: any;
         if (this.editor.bsState.query.preAnnotationId) {

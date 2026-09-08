@@ -23,10 +23,13 @@ public class PointLabelController {
     private PointLabelUseCase pointLabelUseCase;
 
     @GetMapping("frame")
-    public ResponseEntity<ByteArrayResource> frame(@RequestParam Long dataId) throws IOException {
+    public ResponseEntity<ByteArrayResource> frame(@RequestParam Long dataId,
+                                                   @RequestParam(required = false) Long preAnnotationId) throws IOException {
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .body(new ByteArrayResource(pointLabelUseCase.getLabels(dataId)));
+                .body(new ByteArrayResource(preAnnotationId == null
+                        ? pointLabelUseCase.getLabels(dataId)
+                        : pointLabelUseCase.getPreAnnotationLabels(preAnnotationId, dataId)));
     }
 
     @PostMapping("save")

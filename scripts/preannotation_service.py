@@ -102,6 +102,10 @@ def clip_root_from_point(path: Path) -> Path:
     raise ValueError(f"Cannot infer clip root from point cloud: {path}")
 
 
+def occ_label_target(clip: Path, point_path: Path) -> Path:
+    return clip / "anno" / "occ_labels" / "LIDAR_CAR" / f"{point_path.stem}.label"
+
+
 def model_datas(frames: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
     result = []
     for frame in frames.values():
@@ -568,7 +572,7 @@ def commit(payload):
     for data_id,attrs in mysql_rows("SELECT data_id,class_attributes FROM data_annotation_object "
                                     f"WHERE source_id=-1 AND data_id IN ({sql_ids(ids)})"):
         gt[int(data_id)].append(attrs_to_annotation(json.loads(attrs)))
-    obstacle_groups=defaultdict(list); occ_written=0
+    obstacle_groups=defaultdict(list); occ_written=0; occ_files={}
     occ_labels=payload.get("occLabels") or {}
     draft_path = WORK_ROOT / f"job_{int(payload['preAnnotationId'])}" / "draft.json"
     draft = json.loads(draft_path.read_text(encoding="utf-8")) if draft_path.exists() else {}
@@ -588,9 +592,9 @@ def commit(payload):
             size=point_path.stat().st_size
             if not labels or size % (len(labels)*4) or not (1 <= size//(len(labels)*4) <= 16):
                 raise ValueError(f"OCC label length does not match point cloud for dataId={data_id}")
-            original=resource(frame,"occ_label",".label")
-            target=safe_path(original["path"]) if original else clip/"anno"/"occ_labels"/"LIDAR_CAR"/(point_path.stem+".label")
+            target=occ_label_target(clip,point_path)
             atomic_write(target,labels); occ_written+=1
+            occ_files[str(data_id)]={"path":target.relative_to(ROOT).as_posix(),"size":len(labels)}
     for path,items in obstacle_groups.items():
         existing=read_json_object(path)
         clip=items[0][3]
@@ -602,7 +606,7 @@ def commit(payload):
         doc=build_frame_entries(clip,existing,annotations_by_key)
         normalize_clip_track_ids(doc)
         atomic_write(path,(json.dumps(doc,ensure_ascii=False,indent=2)+"\n").encode("utf-8"))
-    return {"clips":len(obstacle_groups),"frames":len(frames),"occLabels":occ_written}
+    return {"clips":len(obstacle_groups),"frames":len(frames),"occLabels":occ_written,"occFiles":occ_files}
 
 
 def preannotate(payload):

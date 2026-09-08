@@ -10,28 +10,30 @@ function labelsToBase64(labels: Uint8Array) {
     return btoa(binary);
 }
 
-export function getPointLabels(dataId: string | number) {
-    return get<Blob>('/api/point-label/frame', { dataId }, { responseType: 'blob' });
+export function getPointLabels(dataId: string | number, preAnnotationId?: string | number) {
+    return get<Blob>('/api/point-label/frame', { dataId, preAnnotationId }, { responseType: 'blob' });
 }
 
-export async function getSavedPointLabels(dataId: string | number) {
-    const labels = await getPointLabels(dataId);
+export async function getSavedPointLabels(dataId: string | number, preAnnotationId?: string | number) {
+    const labels = await getPointLabels(dataId, preAnnotationId);
     if (!labels.size) return undefined;
     return new Uint8Array(await labels.arrayBuffer());
 }
 
-export function savePointLabels(dataId: string | number, labels: Uint8Array, frameId?: string) {
+export function savePointLabels(dataId: string | number, labels: Uint8Array, frameId?: string, preAnnotationId?: string | number) {
     return post('/api/point-label/save', {
         dataId,
         frameId,
+        preAnnotationId,
         labelsBase64: labelsToBase64(labels),
     });
 }
 
-export function modifyPointLabels(dataId: string | number, labels: Uint8Array, frameId?: string) {
+export function modifyPointLabels(dataId: string | number, labels: Uint8Array, frameId?: string, preAnnotationId?: string | number) {
     return post('/api/point-label/modify', {
         dataId,
         frameId,
+        preAnnotationId,
         labelsBase64: labelsToBase64(labels),
     });
 }

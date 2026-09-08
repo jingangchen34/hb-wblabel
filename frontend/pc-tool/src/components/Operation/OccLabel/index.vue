@@ -312,12 +312,13 @@
         editor.showMsg('success', `Relabeled ${indices.length} points`);
     }
 
-    async function saveLabels(options: { throwOnError?: boolean } = {}) {
+    async function saveLabels(options: { throwOnError?: boolean; onlyIfDirty?: boolean } = {}) {
         const frame = editor.getCurrentFrame();
         if (!frame) {
             editor.showMsg('warning', 'No OCC labels loaded');
             return;
         }
+        if (options.onlyIfDirty && dirtyPointIndices.size === 0) return;
         editor.showLoading({
             type: 'loading',
             content: 'Preparing OCC labels...',
@@ -334,7 +335,7 @@
                 editor.showMsg('warning', 'No OCC labels loaded');
                 return;
             }
-            await api.modifyPointLabels(frame.id, labels, frame.id);
+            await api.modifyPointLabels(frame.id, labels, frame.id, editor.bsState.query.preAnnotationId);
             updateFrameResourceLabels(frame.id, labels);
             dirtyPointIndices.clear();
             undoStack.splice(0, undoStack.length);
@@ -405,12 +406,29 @@
                 type: 'loading',
                 content: `Saving OCC labels ${index + 1}/${entries.length}...`,
             });
-            await api.patchPointLabels(
-                frameId,
-                patch.indices,
-                new Uint8Array(patch.labels),
-                patch.pointCount,
-            );
+            if (editor.bsState.query.preAnnotationId) {
+                const resource = editor.dataResource.dataMap[frameId];
+                const current = (resource?.pointsData as any)?.pointLabels as Uint8Array | undefined;
+                const labels = current?.length
+                    ? new Uint8Array(current)
+                    : new Uint8Array(patch.pointCount);
+                patch.indices.forEach((pointIndex, patchIndex) => {
+                    if (pointIndex >= 0 && pointIndex < labels.length) labels[pointIndex] = patch.labels[patchIndex];
+                });
+                await api.modifyPointLabels(
+                    frameId,
+                    labels,
+                    frameId,
+                    editor.bsState.query.preAnnotationId,
+                );
+            } else {
+                await api.patchPointLabels(
+                    frameId,
+                    patch.indices,
+                    new Uint8Array(patch.labels),
+                    patch.pointCount,
+                );
+            }
             updateFrameResourcePatch(frameId, patch.indices, patch.labels);
             await new Promise((resolve) => window.setTimeout(resolve, 0));
         }
@@ -498,7 +516,7 @@
     }
 
     onMounted(() => {
-        (editor as any).saveOccLabels = () => saveLabels({ throwOnError: true });
+        (editor as any).saveOccLabels = () => saveLabels({ throwOnError: true, onlyIfDirty: true });
     });
 
     onBeforeUnmount(() => {
