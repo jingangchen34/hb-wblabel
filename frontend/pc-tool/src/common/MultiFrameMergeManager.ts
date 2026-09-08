@@ -53,6 +53,11 @@ export default class MultiFrameMergeManager {
         this.syncState();
     }
 
+    selectFrames(frames: IFrame[]) {
+        frames.filter(Boolean).forEach((frame) => this.selectedFrameIds.add(String(frame.id)));
+        this.syncState();
+    }
+
     clearSelection() {
         this.selectedFrameIds.clear();
         this.syncState();

@@ -1,6 +1,7 @@
 <template>
     <div
         style="height: 36px; background-color: #23262e; white-space: nowrap"
+        title="Shift + 左键连续选择；Ctrl + 左键单帧添加或取消"
         @click.prevent="(e) => onClickTick(e)"
     >
         <div class="i-scale-head-container">
@@ -104,6 +105,7 @@
         return headConfig;
     });
     const mergeSelectedIds = computed(() => ((editor.state as any).mergeSelectedFrameIds || []) as string[]);
+    const mergeSelectionAnchor = ref<number | null>(null);
 
     watch(
         () => props.config.curFrameIndex,
@@ -236,11 +238,29 @@
 
     function onClickTick(event: MouseEvent) {
         const index = getFrameIndexByEvent(event);
-        if (event.shiftKey && props.frames[index - 1]) {
-            editor.multiFrameMergeManager.toggleFrame(props.frames[index - 1] as any);
+        const frameIndex = index - 1;
+        if (event.shiftKey) {
+            selectMergeFrames(frameIndex, true);
+            return;
+        }
+        if (event.ctrlKey || event.metaKey) {
+            selectMergeFrames(frameIndex, false);
             return;
         }
         onChangeFrameIndex(index);
+    }
+    function selectMergeFrames(frameIndex: number, range: boolean) {
+        const frame = props.frames[frameIndex];
+        if (!frame) return;
+        if (range) {
+            const anchor = mergeSelectionAnchor.value ?? editor.state.frameIndex;
+            const start = Math.max(0, Math.min(anchor, frameIndex));
+            const end = Math.min(props.frames.length - 1, Math.max(anchor, frameIndex));
+            editor.multiFrameMergeManager.selectFrames(props.frames.slice(start, end + 1) as any);
+        } else {
+            editor.multiFrameMergeManager.toggleFrame(frame as any);
+        }
+        mergeSelectionAnchor.value = frameIndex;
     }
     function isMergeSelected(index: number) {
         const frame = props.frames[index] as any;
@@ -253,6 +273,7 @@
             index = props.frames.length;
             return false;
         }
+        mergeSelectionAnchor.value = index - 1;
         editor.loadFrame(index - 1); // emit('frameIndexChange', index);
         // editor.reportManager.reportChangeFrame('Time Line', beforeIndex);
         return true;
@@ -290,6 +311,10 @@
                 e = e || window.event;
                 preMouseEvent(e);
                 if (e.button === 2) return;
+                if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                    selectMergeFrames(editor.state.frameIndex, e.shiftKey);
+                    return;
+                }
                 tempDragDomLeft = iState.dragDomLeft;
                 iState.isDrag = true;
                 divX = e.clientX;
