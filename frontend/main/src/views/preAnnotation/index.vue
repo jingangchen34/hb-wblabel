@@ -92,7 +92,7 @@ async function selectClip(record:any){
   try { clips.value=await getPreAnnotationClipsApi(record.id) || []; }
   finally { clipLoading.value=false; }
 }
-const openClip = (clip:any) => goToTool({ datasetId:activeRecord.value.datasetId, dataId:clip.firstDataId, type:'readOnly', dataType:'frame', preAnnotationId:activeRecord.value.id, preAnnotation:'1' }, datasetTypeEnum.LIDAR_FUSION);
+const openClip = (clip:any) => goToTool({ datasetId:activeRecord.value.datasetId, dataId:clip.sceneId, type:'readOnly', dataType:'scene', preAnnotationId:activeRecord.value.id, preAnnotation:'1' }, datasetTypeEnum.LIDAR_FUSION);
 const remove = (r:any) => createConfirm({ iconType:'warning', title:'删除该预标注任务？', onOk: async()=>{ await deletePreAnnotationApi(r.id); await load(); } });
 const columns:any[] = [
   { title:'任务', dataIndex:'name', width:180 }, { title:'数据集', dataIndex:'datasetName', width:220 },

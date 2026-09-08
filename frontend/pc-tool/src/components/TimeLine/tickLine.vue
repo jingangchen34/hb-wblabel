@@ -105,7 +105,12 @@
         return headConfig;
     });
     const mergeSelectedIds = computed(() => ((editor.state as any).mergeSelectedFrameIds || []) as string[]);
+    const mergeSelectionMode = computed(() => !!(editor.state as any).mergeSelectionMode);
     const mergeSelectionAnchor = ref<number | null>(null);
+
+    watch(mergeSelectionMode, () => {
+        mergeSelectionAnchor.value = null;
+    });
 
     watch(
         () => props.config.curFrameIndex,
@@ -239,6 +244,10 @@
     function onClickTick(event: MouseEvent) {
         const index = getFrameIndexByEvent(event);
         const frameIndex = index - 1;
+        if (mergeSelectionMode.value) {
+            selectInSelectionMode(frameIndex);
+            return;
+        }
         if (event.shiftKey) {
             selectMergeFrames(frameIndex, true);
             return;
@@ -248,6 +257,17 @@
             return;
         }
         onChangeFrameIndex(index);
+    }
+    function selectInSelectionMode(frameIndex: number) {
+        const frame = props.frames[frameIndex];
+        if (!frame) return;
+        if (mergeSelectionAnchor.value === null) {
+            editor.multiFrameMergeManager.clearSelection();
+            editor.multiFrameMergeManager.selectFrames([frame] as any);
+            mergeSelectionAnchor.value = frameIndex;
+            return;
+        }
+        selectMergeFrames(frameIndex, true);
     }
     function selectMergeFrames(frameIndex: number, range: boolean) {
         const frame = props.frames[frameIndex];
@@ -311,6 +331,10 @@
                 e = e || window.event;
                 preMouseEvent(e);
                 if (e.button === 2) return;
+                if (mergeSelectionMode.value) {
+                    selectInSelectionMode(editor.state.frameIndex);
+                    return;
+                }
                 if (e.shiftKey || e.ctrlKey || e.metaKey) {
                     selectMergeFrames(editor.state.frameIndex, e.shiftKey);
                     return;

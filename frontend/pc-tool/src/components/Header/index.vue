@@ -118,6 +118,14 @@
                     :disabled="blocking"
                 />
                 <span class="merge-text">扣框内点</span>
+                <a-button
+                    class="basic"
+                    :type="mergeSelectionMode ? 'primary' : 'default'"
+                    :disabled="blocking"
+                    @click="onToggleMergeSelection"
+                >
+                    {{ mergeSelectionMode ? '结束选择' : '选择帧' }}
+                </a-button>
                 <a-button class="basic" :disabled="blocking" @click="onMergeSelected">
                     合并所选{{ selectedMergeCount ? `(${selectedMergeCount})` : '' }}
                 </a-button>

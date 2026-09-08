@@ -16,6 +16,7 @@ export default function useHeader() {
     let dataIndex = ref(state.frameIndex + 1);
     let removeBoxPoints = ref(true);
     let selectedMergeCount = computed(() => ((state as any).mergeSelectedFrameIds || []).length);
+    let mergeSelectionMode = computed(() => !!(state as any).mergeSelectionMode);
     let mergeActive = computed(() => !!(state as any).mergeActive);
     let currentSeriesIndex = computed(() => {
         const list = bsState.seriesFrameList || [];
@@ -158,6 +159,11 @@ export default function useHeader() {
 
     function onMergeSelected() {
         editor.multiFrameMergeManager.mergeSelected(removeBoxPoints.value);
+    }
+
+    function onToggleMergeSelection() {
+        (state as any).mergeSelectionMode = !mergeSelectionMode.value;
+        editor.multiFrameMergeManager.clearSelection();
     }
 
     function onMergeAll() {
@@ -516,6 +522,7 @@ export default function useHeader() {
         dataIndex,
         removeBoxPoints,
         selectedMergeCount,
+        mergeSelectionMode,
         mergeActive,
         currentSeriesIndex,
         hasPreSeriesFrame,
@@ -528,6 +535,7 @@ export default function useHeader() {
         onSaveAll,
         onCommitPreAnnotation,
         onMergeSelected,
+        onToggleMergeSelection,
         onMergeAll,
         onCancelMerge,
         onPre,
