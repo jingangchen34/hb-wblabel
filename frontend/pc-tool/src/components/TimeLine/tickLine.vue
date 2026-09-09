@@ -1,9 +1,16 @@
 <template>
     <div
-        style="height: 36px; background-color: #23262e; white-space: nowrap"
+        style="position: relative; height: 36px; background-color: #23262e; white-space: nowrap"
         title="Shift + 左键连续选择；Ctrl + 左键单帧添加或取消"
         @click.prevent="(e) => onClickTick(e)"
     >
+        <button
+            v-if="mergeSelectionMode || mergeSelectedIds.length"
+            class="merge-clear-selection"
+            @click.stop="clearMergeSelection"
+        >
+            {{ mergeSelectionMode ? '取消选择' : '清空选择' }}
+        </button>
         <div class="i-scale-head-container">
             <template v-for="(item, index) in configArray" :key="item.key">
                 <div
@@ -78,11 +85,13 @@
     onMounted(() => {
         addDragListener();
         addResizeListener();
+        window.addEventListener('keydown', onKeyDown);
         setTimeout(domResize, 2000);
     });
 
     onUnmounted(() => {
         removeEvent();
+        window.removeEventListener('keydown', onKeyDown);
     });
 
     // data && computed && watch
@@ -268,6 +277,16 @@
             return;
         }
         selectMergeFrames(frameIndex, true);
+        (editor.state as any).mergeSelectionMode = false;
+    }
+    function clearMergeSelection() {
+        (editor.state as any).mergeSelectionMode = false;
+        editor.multiFrameMergeManager.clearSelection();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+        if (event.key === 'Escape' && (mergeSelectionMode.value || mergeSelectedIds.value.length)) {
+            clearMergeSelection();
+        }
     }
     function selectMergeFrames(frameIndex: number, range: boolean) {
         const frame = props.frames[frameIndex];
@@ -486,6 +505,21 @@
                 height: 10px;
             }
         }
+    }
+
+    .merge-clear-selection {
+        position: sticky;
+        right: 8px;
+        top: 6px;
+        z-index: 20;
+        float: right;
+        height: 24px;
+        padding: 0 10px;
+        border: 1px solid #7acae8;
+        border-radius: 12px;
+        background: #263d54;
+        color: #d9f2ff;
+        cursor: pointer;
     }
     // }
 </style>

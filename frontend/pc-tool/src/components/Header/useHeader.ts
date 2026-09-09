@@ -158,19 +158,23 @@ export default function useHeader() {
     }
 
     function onMergeSelected() {
+        (state as any).mergeSelectionMode = false;
         editor.multiFrameMergeManager.mergeSelected(removeBoxPoints.value);
     }
 
     function onToggleMergeSelection() {
-        (state as any).mergeSelectionMode = !mergeSelectionMode.value;
-        editor.multiFrameMergeManager.clearSelection();
+        const next = !mergeSelectionMode.value;
+        (state as any).mergeSelectionMode = next;
+        if (next) editor.multiFrameMergeManager.clearSelection();
     }
 
     function onMergeAll() {
+        (state as any).mergeSelectionMode = false;
         editor.multiFrameMergeManager.mergeAll(removeBoxPoints.value);
     }
 
     function onCancelMerge() {
+        (state as any).mergeSelectionMode = false;
         editor.multiFrameMergeManager.cancel();
     }
 
