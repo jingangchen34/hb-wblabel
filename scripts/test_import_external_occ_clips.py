@@ -52,6 +52,37 @@ class V2vImportTest(unittest.TestCase):
             self.assertIn("all_test/7cam/ks/ks_qlc_result/clip-1/v2v/V2V.csv", sql)
             self.assertIn("JSON_OBJECT('name', 'v2v', 'type', 'directory'", sql)
 
+    def test_conch_scan_root_without_obstacle_preserves_parent_hierarchy(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="conch-scan-test-", dir=TEST_TEMP_ROOT) as temp_dir:
+            root = Path(temp_dir)
+            scan_root = root / "all_test" / "7cam" / "noise_result"
+            clip = scan_root / "2026-09-08-02-43-22"
+            lidar_dir = clip / "lidars" / "LIDAR_CAR"
+            lidar_dir.mkdir(parents=True)
+            (clip / "pose.json").write_text("{}", encoding="utf-8")
+            (lidar_dir / "LIDAR_1788806602600179433.bin").write_bytes(b"\0" * 28)
+            args = SimpleNamespace(
+                root=str(root),
+                scan_root=str(scan_root),
+                conch_data_layout=True,
+                skip_obstacle_annotations=True,
+                dataset_from="clip-parent",
+                dataset_name=None,
+                dataset_description="test",
+                bucket_name="external-data",
+                user_id=1,
+            )
+
+            sql, clip_count, frame_count = generate_sql(args)
+
+            self.assertEqual((clip_count, frame_count), (1, 1))
+            self.assertIn("-- Dataset: all_test/7cam/noise_result", sql)
+            self.assertIn("-- Scene: 2026-09-08-02-43-22", sql)
+            self.assertIn(
+                "all_test/7cam/noise_result/2026-09-08-02-43-22/lidars/LIDAR_CAR/",
+                sql,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

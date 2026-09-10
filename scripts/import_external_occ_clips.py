@@ -372,7 +372,10 @@ def generate_sql(args: argparse.Namespace) -> tuple[str, int, int]:
     except ValueError as exc:
         raise SystemExit(f"--scan-root must be inside --root: scan-root={scan_root}, root={root}") from exc
 
-    require_obstacle = None if args.conch_data_layout else not args.skip_obstacle_annotations
+    # An explicit request to skip obstacle annotations must also allow clips that
+    # do not have anno/obstacle_3d.json.  Previously --conch-data-layout took
+    # precedence here, so scans outside new_clip silently returned zero clips.
+    require_obstacle = False if args.skip_obstacle_annotations else (None if args.conch_data_layout else True)
     clips = find_clip_dirs(scan_root, require_obstacle=require_obstacle, layout_root=root)
     vargen = VarGen()
     lines: list[str] = [
