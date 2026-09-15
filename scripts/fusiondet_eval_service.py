@@ -36,7 +36,10 @@ def env(name: str, default: str) -> str:
 FUSIONDET_ROOT = Path(env("FUSIONDET_ROOT", "/home/user/cjg/code/fusiondet"))
 PYTHON_BIN = env("FUSIONDET_EVAL_PYTHON", sys.executable)
 TEST_SCRIPT = Path(env("FUSIONDET_TEST_SCRIPT", str(FUSIONDET_ROOT / "tools/test.py")))
-WORK_ROOT = Path(env("FUSIONDET_PLATFORM_EVAL_ROOT", str(FUSIONDET_ROOT / "work_dirs/platform_eval")))
+WORK_ROOT = Path(env("FUSIONDET_PLATFORM_EVAL_ROOT", "/home/user/cjg/conch_data/tmp_data/platform_eval")).resolve()
+LEGACY_WORK_ROOT = Path(
+    env("FUSIONDET_PLATFORM_EVAL_LEGACY_ROOT", str(FUSIONDET_ROOT / "work_dirs/platform_eval"))
+).resolve()
 POINTPILLARS_ROOT = Path(env("POINTPILLARS_ROOT", "/home/user/cjg/code/pointpillars_hb"))
 POINTPILLARS_PYTHON = env("POINTPILLARS_EVAL_PYTHON", "/home/user/anaconda3/envs/sanet_deploy/bin/python")
 POINTPILLARS_RAW_EVAL_PYTHON = env("POINTPILLARS_RAW_EVAL_PYTHON", "/home/user/anaconda3/envs/pointpillars/bin/python")
@@ -88,6 +91,19 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, body: Any) -> No
     handler.send_header("Content-Length", str(len(data)))
     handler.end_headers()
     handler.wfile.write(data)
+
+
+def cleanup_evaluation(evaluation_id: int) -> list[str]:
+    """Remove one evaluation's transient workspace from current and legacy roots."""
+    removed: list[str] = []
+    for root in dict.fromkeys((WORK_ROOT, LEGACY_WORK_ROOT)):
+        target = (root / f"eval_{int(evaluation_id)}").resolve()
+        if target == root or root not in target.parents:
+            raise ValueError(f"Invalid evaluation workspace path: {target}")
+        if target.is_dir():
+            shutil.rmtree(target)
+            removed.append(str(target))
+    return removed
 
 
 def mysql_command(sql: str) -> list[str]:
@@ -1296,16 +1312,31 @@ class Handler(BaseHTTPRequestHandler):
             json_response(self, HTTPStatus.NOT_FOUND, {"code": ERROR, "message": "not found"})
 
     def do_POST(self) -> None:
-        if self.path.rstrip("/") != "/evaluate":
+        path = self.path.rstrip("/")
+        if path not in {"/evaluate", "/cleanup"}:
             json_response(self, HTTPStatus.NOT_FOUND, {"code": ERROR, "message": "not found"})
             return
+        payload: dict[str, Any] = {}
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+            if path == "/cleanup":
+                removed = cleanup_evaluation(int(payload["evaluationId"]))
+                json_response(self, HTTPStatus.OK, {"code": OK, "message": "", "data": {"removed": removed}})
+                return
             data = run_eval(payload)
             json_response(self, HTTPStatus.OK, {"code": OK, "message": "", "data": data})
         except Exception as exc:
             json_response(self, HTTPStatus.OK, {"code": ERROR, "message": str(exc), "data": None})
+        finally:
+            # Metrics and per-frame predictions are already serialized in the
+            # response. The generated datasets, model outputs and logs are
+            # transient and can otherwise consume many gigabytes per run.
+            if path == "/evaluate" and payload.get("evaluationId") is not None:
+                try:
+                    cleanup_evaluation(int(payload["evaluationId"]))
+                except Exception as cleanup_exc:
+                    self.log_error("Failed to clean evaluation workspace: %s", cleanup_exc)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
