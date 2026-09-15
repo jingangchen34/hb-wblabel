@@ -13,7 +13,8 @@ from urllib.request import Request, urlopen
 
 OK, ERROR = "OK", "ERROR"
 ROOT = Path(os.getenv("EXTERNAL_DATA_ROOT", "/home/user/cjg/conch_data")).resolve()
-WORK_ROOT = Path(os.getenv("PREANNOTATION_WORK_ROOT", "/home/user/cjg/preannotation_jobs")).resolve()
+WORK_ROOT = Path(os.getenv("PREANNOTATION_WORK_ROOT", "/home/user/cjg/conch_data/tmp_data")).resolve()
+LEGACY_WORK_ROOT = Path(os.getenv("PREANNOTATION_LEGACY_WORK_ROOT", "/home/user/cjg/preannotation_jobs")).resolve()
 MYSQL_CONTAINER = os.getenv("MYSQL_DOCKER_CONTAINER", "hb-wblabel-mysql-1")
 MYSQL_USER = os.getenv("XTREME1_MYSQL_USER", "xtreme1")
 MYSQL_PASSWORD = os.getenv("XTREME1_MYSQL_PASSWORD", "Rc4K3L6f")
@@ -75,8 +76,12 @@ def artifact_path(url: str) -> Path | None:
     raw = urlparse(str(url)).path.replace("\\", "/")
     work_marker = "/preannotation-artifacts/"
     if work_marker in raw:
-        resolved = (WORK_ROOT / raw.split(work_marker, 1)[1]).resolve()
-        return resolved if resolved != WORK_ROOT and WORK_ROOT in resolved.parents else None
+        relative = raw.split(work_marker, 1)[1]
+        for root in dict.fromkeys((WORK_ROOT, LEGACY_WORK_ROOT)):
+            resolved = (root / relative).resolve()
+            if resolved != root and root in resolved.parents and resolved.exists():
+                return resolved
+        return None
     marker = "/external-data/"
     if marker not in raw: return None
     try: return safe_path(raw.split(marker, 1)[1])
@@ -178,10 +183,9 @@ def parse_fusiondet_outputs(output: Path, data_ids: list[int]) -> tuple[dict[str
                     "rotZ": float(obj.get("yaw", obj.get("heading", 0.0)) or 0),
                 })
         artifact = {}
-        for name, suffix in (("label", ".label"), ("npz", ".npz")):
-            path = output / "occ" / f"{key}{suffix}"
-            if path.is_file():
-                artifact[name + "Url"] = artifact_url(path)
+        path = output / "occ" / f"{key}.label"
+        if path.is_file():
+            artifact["labelUrl"] = artifact_url(path)
         if artifact:
             occ[key] = artifact
     return predictions, occ
@@ -222,7 +226,7 @@ def call_fusiondet(payload: dict[str, Any], frames: dict[int, dict[str, Any]]) -
                "--config", str(config), "--checkpoint", str(checkpoint),
                "--data_root", str(input_dir), "--load_dim", str(load_dim),
                "--use_dim", str(use_dim), "--model_type", "point",
-               "--out_dir", str(output_dir), "--save_occ", "--no_save_pcd",
+               "--out_dir", str(output_dir), "--save_occ", "--occ_point_labels_only", "--no_save_pcd",
                "--donot_save_img", "--no_with_gt"]
     log_path = work / "preannotation.log"
     with log_path.open("w", encoding="utf-8") as log:
@@ -233,7 +237,15 @@ def call_fusiondet(payload: dict[str, Any], frames: dict[int, dict[str, Any]]) -
     if result.returncode:
         tail = log_path.read_text(encoding="utf-8", errors="replace")[-8000:]
         raise RuntimeError(f"FusionDet inference failed (exit {result.returncode}):\n{tail}")
-    return parse_fusiondet_outputs(output_dir, selected_ids)
+    predictions, occ = parse_fusiondet_outputs(output_dir, selected_ids)
+    # Predictions are persisted in draft.json/the database.  Keep only the
+    # point-wise OCC labels required for review and ground-truth commit.
+    shutil.rmtree(input_dir, ignore_errors=True)
+    shutil.rmtree(output_dir / "det", ignore_errors=True)
+    for path in (output_dir / "occ").glob("*"):
+        if path.is_file() and path.suffix.lower() != ".label":
+            path.unlink()
+    return predictions, occ
 
 
 def timestamp_of(name: str) -> int:
@@ -574,7 +586,10 @@ def commit(payload):
         gt[int(data_id)].append(attrs_to_annotation(json.loads(attrs)))
     obstacle_groups=defaultdict(list); occ_written=0; occ_files={}
     occ_labels=payload.get("occLabels") or {}
-    draft_path = WORK_ROOT / f"job_{int(payload['preAnnotationId'])}" / "draft.json"
+    job_name = f"job_{int(payload['preAnnotationId'])}"
+    draft_path = WORK_ROOT / job_name / "draft.json"
+    if not draft_path.exists():
+        draft_path = LEGACY_WORK_ROOT / job_name / "draft.json"
     draft = json.loads(draft_path.read_text(encoding="utf-8")) if draft_path.exists() else {}
     occ_artifacts = draft.get("occArtifacts") or {}
     for data_id,frame in frames.items():
@@ -609,6 +624,19 @@ def commit(payload):
     return {"clips":len(obstacle_groups),"frames":len(frames),"occLabels":occ_written,"occFiles":occ_files}
 
 
+def cleanup(payload):
+    job = int(payload["preAnnotationId"])
+    removed = []
+    for root in dict.fromkeys((WORK_ROOT, LEGACY_WORK_ROOT)):
+        target = (root / f"job_{job}").resolve()
+        if target == root or root not in target.parents:
+            raise ValueError(f"Invalid pre-annotation job path: {target}")
+        if target.is_dir():
+            shutil.rmtree(target)
+            removed.append(str(target))
+    return {"removed": removed}
+
+
 def preannotate(payload):
     job=int(payload["preAnnotationId"]); ids=[int(x) for x in payload.get("dataIds") or []]; mode=str(payload.get("sourceMode") or "AI").upper()
     frames=load_frames(ids); ai,occ,v2v={},{},{}
@@ -636,8 +664,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/artifacts/"):
             try:
                 relative = unquote(urlparse(self.path).path.split("/artifacts/", 1)[1])
-                target = (WORK_ROOT / relative).resolve()
-                if target == WORK_ROOT or WORK_ROOT not in target.parents or not target.is_file():
+                target = None
+                for root in dict.fromkeys((WORK_ROOT, LEGACY_WORK_ROOT)):
+                    candidate = (root / relative).resolve()
+                    if candidate != root and root in candidate.parents and candidate.is_file():
+                        target = candidate
+                        break
+                if target is None:
                     raise FileNotFoundError(relative)
                 raw = target.read_bytes()
                 self.send_response(HTTPStatus.OK)
@@ -653,7 +686,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             payload=json.loads(self.rfile.read(int(self.headers.get("Content-Length","0"))) or b"{}")
-            data=preannotate(payload) if self.path.rstrip("/")=="/preannotate" else commit(payload) if self.path.rstrip("/")=="/commit" else None
+            path = self.path.rstrip("/")
+            data = preannotate(payload) if path == "/preannotate" else commit(payload) if path == "/commit" else cleanup(payload) if path == "/cleanup" else None
             if data is None: respond(self,HTTPStatus.NOT_FOUND,{"code":ERROR,"message":"not found"})
             else: respond(self,HTTPStatus.OK,{"code":OK,"message":"","data":data})
         except Exception as exc: respond(self,HTTPStatus.OK,{"code":ERROR,"message":str(exc),"data":None})

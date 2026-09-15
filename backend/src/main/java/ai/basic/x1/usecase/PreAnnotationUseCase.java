@@ -173,10 +173,24 @@ public class PreAnnotationUseCase {
         var status = committed.containsAll(allowed) ? PreAnnotationStatusEnum.COMMITTED : PreAnnotationStatusEnum.READY;
         recordDAO.updateById(PreAnnotationRecord.builder().id(id).status(status)
                 .committedDataIds(JSONUtil.parseArray(committed)).commitSummary(data).updatedBy(userId).build());
+        if (status == PreAnnotationStatusEnum.COMMITTED) cleanupArtifacts(id);
         return recordDAO.getById(id);
     }
 
-    public void delete(Long id, Long userId) { requireRecord(id); recordDAO.getBaseMapper().softDeleteById(id, userId); }
+    public void delete(Long id, Long userId) {
+        requireRecord(id);
+        recordDAO.getBaseMapper().softDeleteById(id, userId);
+        cleanupArtifacts(id);
+    }
+
+    private void cleanupArtifacts(Long id) {
+        try {
+            post("/cleanup", new cn.hutool.json.JSONObject().set("preAnnotationId", id), 2 * 60 * 1000);
+        } catch (Exception ignored) {
+            // Ground-truth commit/task deletion must remain successful even if
+            // best-effort temporary artifact cleanup is temporarily unavailable.
+        }
+    }
 
     private void run(Long id, Long userId) {
         recordDAO.updateById(PreAnnotationRecord.builder().id(id).status(PreAnnotationStatusEnum.RUNNING).updatedBy(userId).build());
