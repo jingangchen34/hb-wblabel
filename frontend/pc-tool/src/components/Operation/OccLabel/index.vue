@@ -54,7 +54,7 @@
 <script setup lang="ts">
     import { reactive, onBeforeUnmount, onMounted } from 'vue';
     import * as THREE from 'three';
-    import { Box, PointsMaterial } from 'pc-render';
+    import { Box, ColorModeEnum, PointsMaterial } from 'pc-render';
     import { useInjectEditor } from '../../../state';
     import { buildPointLabelColors } from '../../../packages/pc-render/occ/pointLabel';
     import * as api from '../../../api';
@@ -273,12 +273,17 @@
         const position = points.geometry.getAttribute('position') as THREE.BufferAttribute;
         if (!position) return [];
 
-        box.updateMatrixWorld();
+        points.updateMatrixWorld(true);
+        box.updateMatrixWorld(true);
         if (!box.geometry.boundingBox) box.geometry.computeBoundingBox();
         const bounds = box.geometry.boundingBox;
         if (!bounds) return [];
 
-        boxInvertMatrix.copy(box.matrixWorld).invert();
+        // Point positions are local to the Points object, whereas a box matrix
+        // is expressed in world space. Convert point-local coordinates all the
+        // way into box-local coordinates so merged/transformed clouds match
+        // the points highlighted by the renderer.
+        boxInvertMatrix.copy(box.matrixWorld).invert().multiply(points.matrixWorld);
         const indices: number[] = [];
         for (let index = 0; index < position.count; index++) {
             boxPoint.fromBufferAttribute(position, index).applyMatrix4(boxInvertMatrix);
@@ -309,6 +314,17 @@
         activeUndo = new Map();
         applyLabelIndices(indices, state.label);
         finishUndoAction();
+        // An OCC frame that originally contains only zero labels may still be
+        // displayed in height-color mode. Switch to semantic RGB immediately,
+        // then clear the box selection so its highlight cannot hide the newly
+        // assigned semantic colors.
+        config.pointColorMode = ColorModeEnum.RGB;
+        const points = getPoints();
+        (points?.material as PointsMaterial | undefined)?.setUniforms({
+            colorMode: ColorModeEnum.RGB,
+        });
+        editor.selectObject();
+        editor.pc.render();
         editor.showMsg('success', `Relabeled ${indices.length} points`);
     }
 

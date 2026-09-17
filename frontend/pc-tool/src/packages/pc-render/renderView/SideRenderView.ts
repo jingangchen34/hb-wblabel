@@ -291,7 +291,8 @@ export default class SideRenderView extends Render {
             // render points
             let groupPoint = groupPoints.children[0] as THREE.Points;
             let box = hasObject3D as Box;
-            box.updateMatrixWorld();
+            groupPoint.updateMatrixWorld(true);
+            box.updateMatrixWorld(true);
             // if (!box.geometry.boundingBox) box.geometry.computeBoundingBox();
 
             let bbox = box.geometry.boundingBox as THREE.Box3;
@@ -309,7 +310,10 @@ export default class SideRenderView extends Render {
                     min: bbox.min,
                     max: bbox.max,
                     color: this.selectColor,
-                    matrix: this.boxInvertMatrix.copy(box.matrixWorld).invert(),
+                    matrix: this.boxInvertMatrix
+                        .copy(box.matrixWorld)
+                        .invert()
+                        .multiply(groupPoint.matrixWorld),
                 },
             });
             this.renderer.render(groupPoint, this.camera);

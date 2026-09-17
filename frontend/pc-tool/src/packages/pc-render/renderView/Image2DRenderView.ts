@@ -603,7 +603,8 @@ export default class Image2DRenderView extends Render {
         if (this.renderBox && this.renderPoints && selection3Ds.length > 0) {
             let groupPoint = groupPoints.children[0] as THREE.Points;
             let box = selection[0] as Box;
-            box.updateMatrixWorld();
+            groupPoint.updateMatrixWorld(true);
+            box.updateMatrixWorld(true);
             if (!box.geometry.boundingBox) box.geometry.computeBoundingBox();
 
             let bbox = box.geometry.boundingBox;
@@ -622,7 +623,10 @@ export default class Image2DRenderView extends Render {
                     min: bbox?.min,
                     max: bbox?.max,
                     color: selectColor,
-                    matrix: this.boxInvertMatrix.copy(box.matrixWorld).invert(),
+                    matrix: this.boxInvertMatrix
+                        .copy(box.matrixWorld)
+                        .invert()
+                        .multiply(groupPoint.matrixWorld),
                 },
             });
             renderer.render(groupPoint, this.camera);
