@@ -144,6 +144,28 @@
             </tbody>
           </table>
         </div>
+        <div v-if="occClassGroups.length" class="safety-metrics">
+          <h3>OCC 按类别误检/漏检帧</h3>
+          <div class="safety-metrics__hint">按错误体素数量从高到低排列帧；点击后只浏览该类别对应的错误帧。</div>
+          <Select v-model:value="selectedOccClass" class="safety-metrics__select">
+            <Select.Option v-for="group in occClassGroups" :key="group.className" :value="group.className">{{ group.className }}</Select.Option>
+          </Select>
+          <table v-if="selectedOccClassGroup">
+            <thead><tr><th>Class</th><th>IoU</th><th>TP / FP / FN voxels</th><th>错误帧</th></tr></thead>
+            <tbody><tr>
+              <td>{{ selectedOccClassGroup.className }}</td>
+              <td>{{ selectedOccClassGroup.iou == null ? '-' : formatRate(selectedOccClassGroup.iou) }}</td>
+              <td>{{ selectedOccClassGroup.TP }} / {{ selectedOccClassGroup.FP }} / {{ selectedOccClassGroup.FN }}</td>
+              <td class="safety-metrics__actions">
+                <Button size="small" :disabled="!selectedOccClassGroup.falsePositiveDataIds?.length" @click="openEvaluationFrames(selectedOccClassGroup.falsePositiveDataIds, selectedOccClassGroup.className)">FP {{ selectedOccClassGroup.falsePositiveDataIds?.length || 0 }} 帧</Button>
+                <Button size="small" :disabled="!selectedOccClassGroup.missedDataIds?.length" @click="openEvaluationFrames(selectedOccClassGroup.missedDataIds, selectedOccClassGroup.className)">Miss {{ selectedOccClassGroup.missedDataIds?.length || 0 }} 帧</Button>
+              </td>
+            </tr></tbody>
+          </table>
+        </div>
+        <div v-if="selectedMetricsRecord?.metrics?.occClassErrorWarning" class="evaluations__warning">
+          OCC 逐帧分类统计失败：{{ selectedMetricsRecord.metrics.occClassErrorWarning }}
+        </div>
         <pre v-if="selectedMetricsRecord?.metrics?.miouTable">{{ selectedMetricsRecord.metrics.miouTable }}</pre>
       </div>
     </Modal>
@@ -177,6 +199,7 @@
   const metricsVisible = ref(false);
   const selectedMetricsRecord = ref<any>(null);
   const selectedSafetyClass = ref('');
+  const selectedOccClass = ref('');
   const manualConfidence = ref<number | undefined>(0.5);
   const manualMetrics = ref<any>(null);
   const hoveredCurvePoint = ref<any>(null);
@@ -277,6 +300,10 @@
     const rows = (group?.recommendations || []).map((item: any) => ({ className: group.className, ...item }));
     return manualMetrics.value ? [manualMetrics.value, ...rows] : rows;
   });
+  const occClassGroups = computed<any[]>(() => selectedMetricsRecord.value?.metrics?.occClassErrors || []);
+  const selectedOccClassGroup = computed(() =>
+    occClassGroups.value.find((group: any) => group.className === selectedOccClass.value) || occClassGroups.value[0],
+  );
 
   const formatRate = (value: number) => `${(Number(value || 0) * 100).toFixed(2)}%`;
   const formatOptionalRate = (value: number | null | undefined) =>
@@ -453,6 +480,9 @@
     const preferred = groups.find((group: any) => group.className === saved)
       || groups.reduce((best: any, group: any) => groupSupport(group) > groupSupport(best) ? group : best, groups[0]);
     selectedSafetyClass.value = preferred?.className || '';
+    selectedOccClass.value = occClassGroups.value.find((group: any) => group.className === 'noise')?.className
+      || occClassGroups.value[0]?.className
+      || '';
     metricsVisible.value = true;
   };
 

@@ -653,6 +653,88 @@ def predictions_from_outputs(outputs_path: Path, data_ids: list[int], class_name
     return predictions
 
 
+def occ_class_error_frames(
+    config_path: str,
+    ann_file: Path,
+    outputs_path: Path,
+    data_ids: list[int],
+    load_dim: int | None,
+) -> list[dict[str, Any]]:
+    """Compute per-class OCC FP/FN counts and the frames that contain them."""
+    fusiondet_root = str(FUSIONDET_ROOT.resolve())
+    if fusiondet_root not in sys.path:
+        sys.path.insert(0, fusiondet_root)
+    from mmcv import Config
+    from mmdet3d.datasets import build_dataset
+
+    resolved_config = Path(config_path)
+    if not resolved_config.is_absolute():
+        resolved_config = FUSIONDET_ROOT / resolved_config
+    cfg = Config.fromfile(str(resolved_config))
+    test_cfg = cfg.data.test
+    test_cfg.ann_file = str(ann_file)
+    test_cfg.pipeline[0].conch = False
+    test_cfg.occ_pipeline[0].conch = False
+    if load_dim:
+        test_cfg.pipeline[0].load_dim = load_dim
+        test_cfg.occ_pipeline[0].load_dim = load_dim
+    dataset = build_dataset(test_cfg)
+    outputs = load_outputs(outputs_path)
+    class_names = list(test_cfg.occ_cfg.class_names)
+    rows = {
+        class_index: {
+            "className": class_name,
+            "classIndex": class_index,
+            "TP": 0,
+            "FP": 0,
+            "FN": 0,
+            "falsePositiveFrames": [],
+            "missedFrames": [],
+        }
+        for class_index, class_name in enumerate(class_names)
+        if class_index > 0
+    }
+
+    for frame_index, item in enumerate(outputs):
+        if frame_index >= len(data_ids):
+            break
+        occupancy = item.get("occupancy") if isinstance(item, dict) else None
+        if not occupancy:
+            continue
+        pred = np.asarray(occupancy[0])
+        data_info = dataset.get_data_info(frame_index)
+        gt_data = dataset.occ_pipeline(data_info)
+        gt = np.asarray(gt_data["voxel_semantics"])
+        mask = np.asarray(gt_data["mask_lidar"]).astype(bool)
+        if pred.shape != gt.shape or mask.shape != gt.shape:
+            continue
+        masked_pred = pred[mask]
+        masked_gt = gt[mask]
+        data_id = int(data_ids[frame_index])
+        for class_index, row in rows.items():
+            tp = int(np.sum((masked_pred == class_index) & (masked_gt == class_index)))
+            fp = int(np.sum((masked_pred == class_index) & (masked_gt != class_index)))
+            fn = int(np.sum((masked_pred != class_index) & (masked_gt == class_index)))
+            row["TP"] += tp
+            row["FP"] += fp
+            row["FN"] += fn
+            if fp:
+                row["falsePositiveFrames"].append({"dataId": data_id, "count": fp})
+            if fn:
+                row["missedFrames"].append({"dataId": data_id, "count": fn})
+
+    result = []
+    for row in rows.values():
+        denominator = row["TP"] + row["FP"] + row["FN"]
+        row["iou"] = row["TP"] / denominator if denominator else None
+        row["falsePositiveFrames"].sort(key=lambda item: item["count"], reverse=True)
+        row["missedFrames"].sort(key=lambda item: item["count"], reverse=True)
+        row["falsePositiveDataIds"] = [item["dataId"] for item in row["falsePositiveFrames"]]
+        row["missedDataIds"] = [item["dataId"] for item in row["missedFrames"]]
+        result.append(row)
+    return result
+
+
 def compact_detection_metrics(summary: dict[str, Any]) -> dict[str, Any]:
     per_class = []
     labels = summary.get("mean_dist_aps") or {}
@@ -1346,6 +1428,13 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         class_names = None
     parsed_metrics = parse_metrics(completed.stdout, work_dir)
     attach_safety_data_ids(parsed_metrics, ordered_data_ids)
+    if "miou" in metrics:
+        try:
+            parsed_metrics["occClassErrors"] = occ_class_error_frames(
+                config_path, ann_file, outputs_path, ordered_data_ids, load_dim
+            )
+        except Exception as exc:
+            parsed_metrics["occClassErrorWarning"] = str(exc)
     predictions = predictions_from_outputs(outputs_path, ordered_data_ids, class_names)
     return {
         "metrics": {**parsed_metrics, "requested": metrics, "loadDim": load_dim},
