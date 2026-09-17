@@ -24,6 +24,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 OK = "OK"
 ERROR = "ERROR"
@@ -37,6 +38,7 @@ FUSIONDET_ROOT = Path(env("FUSIONDET_ROOT", "/home/user/cjg/code/fusiondet"))
 PYTHON_BIN = env("FUSIONDET_EVAL_PYTHON", sys.executable)
 TEST_SCRIPT = Path(env("FUSIONDET_TEST_SCRIPT", str(FUSIONDET_ROOT / "tools/test.py")))
 WORK_ROOT = Path(env("FUSIONDET_PLATFORM_EVAL_ROOT", "/home/user/cjg/conch_data/tmp_data/platform_eval")).resolve()
+ERROR_ROOT = Path(env("FUSIONDET_EVALUATION_ERROR_ROOT", "/home/user/cjg/conch_data/tmp_data/evaluation_errors")).resolve()
 LEGACY_WORK_ROOT = Path(
     env("FUSIONDET_PLATFORM_EVAL_LEGACY_ROOT", str(FUSIONDET_ROOT / "work_dirs/platform_eval"))
 ).resolve()
@@ -93,8 +95,8 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, body: Any) -> No
     handler.wfile.write(data)
 
 
-def cleanup_evaluation(evaluation_id: int) -> list[str]:
-    """Remove one evaluation's transient workspace from current and legacy roots."""
+def cleanup_workspace(evaluation_id: int) -> list[str]:
+    """Remove one evaluation's transient inference workspace."""
     removed: list[str] = []
     for root in dict.fromkeys((WORK_ROOT, LEGACY_WORK_ROOT)):
         target = (root / f"eval_{int(evaluation_id)}").resolve()
@@ -103,6 +105,18 @@ def cleanup_evaluation(evaluation_id: int) -> list[str]:
         if target.is_dir():
             shutil.rmtree(target)
             removed.append(str(target))
+    return removed
+
+
+def cleanup_evaluation(evaluation_id: int) -> list[str]:
+    """Remove transient work plus the compact visualization artifacts."""
+    removed = cleanup_workspace(evaluation_id)
+    target = (ERROR_ROOT / f"eval_{int(evaluation_id)}").resolve()
+    if target == ERROR_ROOT or ERROR_ROOT not in target.parents:
+        raise ValueError(f"Invalid evaluation error artifact path: {target}")
+    if target.is_dir():
+        shutil.rmtree(target)
+        removed.append(str(target))
     return removed
 
 
@@ -654,6 +668,7 @@ def predictions_from_outputs(outputs_path: Path, data_ids: list[int], class_name
 
 
 def occ_class_error_frames(
+    evaluation_id: int,
     config_path: str,
     ann_file: Path,
     outputs_path: Path,
@@ -680,6 +695,9 @@ def occ_class_error_frames(
         test_cfg.occ_pipeline[0].load_dim = load_dim
     dataset = build_dataset(test_cfg)
     outputs = load_outputs(outputs_path)
+    with ann_file.open("rb") as input_file:
+        ann_payload = pickle.load(input_file)
+    ann_infos = ann_payload.get("infos", ann_payload) if isinstance(ann_payload, dict) else ann_payload
     class_names = list(test_cfg.occ_cfg.class_names)
     rows = {
         class_index: {
@@ -694,6 +712,14 @@ def occ_class_error_frames(
         for class_index, class_name in enumerate(class_names)
         if class_index > 0
     }
+    artifact_dir = ERROR_ROOT / f"eval_{int(evaluation_id)}"
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    point_dim = int(load_dim or test_cfg.pipeline[0].get("load_dim", 7))
+    pc_range = np.asarray(test_cfg.occ_cfg.pc_range, dtype=np.float32)
+    voxel_size = np.asarray(test_cfg.occ_cfg.voxel_size, dtype=np.float32)
+    grid_size = np.rint((pc_range[3:] - pc_range[:3]) / voxel_size).astype(np.int64)
 
     for frame_index, item in enumerate(outputs):
         if frame_index >= len(data_ids):
@@ -711,6 +737,23 @@ def occ_class_error_frames(
         masked_pred = pred[mask]
         masked_gt = gt[mask]
         data_id = int(data_ids[frame_index])
+
+        if frame_index >= len(ann_infos):
+            raise IndexError(f"Missing fusion info for dataId={data_id}")
+        lidar_path = fusion_info_lidar_path(ann_infos[frame_index], ann_file.parent)
+        points = np.fromfile(lidar_path, dtype=np.float32)
+        if points.size % point_dim:
+            raise ValueError(f"Point dimension {point_dim} does not match dataId={data_id}")
+        points = points.reshape(-1, point_dim)
+        voxel_indices = np.floor((points[:, :3] - pc_range[:3]) / voxel_size).astype(np.int64)
+        valid = np.all((voxel_indices >= 0) & (voxel_indices < grid_size), axis=1)
+        point_gt = np.zeros(points.shape[0], dtype=np.uint8)
+        point_pred = np.zeros(points.shape[0], dtype=np.uint8)
+        valid_indices = voxel_indices[valid]
+        point_gt[valid] = gt[valid_indices[:, 0], valid_indices[:, 1], valid_indices[:, 2]]
+        point_pred[valid] = pred[valid_indices[:, 0], valid_indices[:, 1], valid_indices[:, 2]]
+        (artifact_dir / f"{data_id}.bin").write_bytes(point_gt.tobytes() + point_pred.tobytes())
+
         for class_index, row in rows.items():
             tp = int(np.sum((masked_pred == class_index) & (masked_gt == class_index)))
             fp = int(np.sum((masked_pred == class_index) & (masked_gt != class_index)))
@@ -1431,7 +1474,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     if "miou" in metrics:
         try:
             parsed_metrics["occClassErrors"] = occ_class_error_frames(
-                config_path, ann_file, outputs_path, ordered_data_ids, load_dim
+                evaluation_id, config_path, ann_file, outputs_path, ordered_data_ids, load_dim
             )
         except Exception as exc:
             parsed_metrics["occClassErrorWarning"] = str(exc)
@@ -1447,8 +1490,26 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
             json_response(self, HTTPStatus.OK, {"code": OK, "message": "ok"})
+        elif parsed.path == "/error-mask":
+            try:
+                query = parse_qs(parsed.query)
+                evaluation_id = int(query.get("evaluationId", [""])[0])
+                data_id = int(query.get("dataId", [""])[0])
+                artifact = (ERROR_ROOT / f"eval_{evaluation_id}" / f"{data_id}.bin").resolve()
+                expected_parent = (ERROR_ROOT / f"eval_{evaluation_id}").resolve()
+                if artifact.parent != expected_parent or not artifact.is_file():
+                    raise FileNotFoundError("OCC error mask does not exist")
+                data = artifact.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as exc:
+                json_response(self, HTTPStatus.NOT_FOUND, {"code": ERROR, "message": str(exc)})
         else:
             json_response(self, HTTPStatus.NOT_FOUND, {"code": ERROR, "message": "not found"})
 
@@ -1475,7 +1536,7 @@ class Handler(BaseHTTPRequestHandler):
             # transient and can otherwise consume many gigabytes per run.
             if path == "/evaluate" and payload.get("evaluationId") is not None:
                 try:
-                    cleanup_evaluation(int(payload["evaluationId"]))
+                    cleanup_workspace(int(payload["evaluationId"]))
                 except Exception as cleanup_exc:
                     self.log_error("Failed to clean evaluation workspace: %s", cleanup_exc)
 

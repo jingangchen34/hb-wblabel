@@ -8,6 +8,9 @@ import ai.basic.x1.usecase.ModelEvaluationUseCase;
 import ai.basic.x1.util.DefaultConverter;
 import ai.basic.x1.util.Page;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -46,6 +49,14 @@ public class ModelEvaluationController extends BaseController {
     public List<ModelEvaluationCompareDTO> compareBatch(@PathVariable Long evaluationId,
                                                         @RequestParam List<Long> dataIds) {
         return modelEvaluationUseCase.compareBatch(evaluationId, dataIds);
+    }
+
+    @GetMapping("{evaluationId}/data/{dataId}/occ-error-mask")
+    public ResponseEntity<ByteArrayResource> occErrorMask(@PathVariable Long evaluationId,
+                                                          @PathVariable Long dataId) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(new ByteArrayResource(modelEvaluationUseCase.getOccErrorMask(evaluationId, dataId)));
     }
 
     @PostMapping("delete/{id}")

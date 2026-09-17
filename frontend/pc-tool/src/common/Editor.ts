@@ -8,6 +8,8 @@ import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
 import MultiFrameMergeManager from './MultiFrameMergeManager';
 import V2vBoxManager from './V2vBoxManager';
+import * as THREE from 'three';
+import { ColorModeEnum, PointsMaterial } from 'pc-render';
 
 function isEvaluationPrediction(object: any) {
     return (
@@ -95,6 +97,75 @@ export default class Editor extends BaseEditor {
         await this.ensureEvaluationFrameObjects();
         await this.multiFrameMergeManager.refreshDisplayForCurrentFrame();
         await this.v2vBoxManager.refreshCurrentFrame();
+        await this.refreshEvaluationOccErrorOverlay();
+    }
+
+    private async refreshEvaluationOccErrorOverlay() {
+        const query = this.bsState.query;
+        const errorType = String(query.evaluationOccErrorType || '').toUpperCase();
+        const targetClass = String(query.evaluationTargetClass || '').toLowerCase();
+        if (!query.showEvaluation || !query.evaluationId || !['FP', 'MISS'].includes(errorType) || !targetClass) {
+            return;
+        }
+        const classIndices: Record<string, number> = {
+            freespace: 1,
+            noise: 2,
+            movable: 3,
+            stationary: 4,
+            passable: 5,
+            unfree: 6,
+        };
+        const classIndex = classIndices[targetClass];
+        const frame = this.getCurrentFrame();
+        if (!frame || !classIndex) return;
+
+        try {
+            const comparison = await api.getEvaluationOccErrorMask(query.evaluationId, frame.id);
+            if (this.getCurrentFrame()?.id !== frame.id) return;
+            const points = this.pc.groupPoints.children[0] as THREE.Points | undefined;
+            const pointCount = points?.geometry.getAttribute('position')?.count || 0;
+            if (!points || !pointCount || comparison.length !== pointCount * 2) {
+                throw new Error(`OCC comparison length ${comparison.length} does not match ${pointCount} points`);
+            }
+            const gt = comparison.subarray(0, pointCount);
+            const pred = comparison.subarray(pointCount);
+            const colors = new Uint8Array(pointCount * 3);
+            let highlighted = 0;
+            for (let index = 0; index < pointCount; index++) {
+                const isError = errorType === 'FP'
+                    ? pred[index] === classIndex && gt[index] !== classIndex
+                    : gt[index] === classIndex && pred[index] !== classIndex;
+                const offset = index * 3;
+                if (isError) {
+                    highlighted++;
+                    if (errorType === 'FP') {
+                        colors[offset] = 255;
+                        colors[offset + 1] = 45;
+                        colors[offset + 2] = 45;
+                    } else {
+                        colors[offset] = 255;
+                        colors[offset + 1] = 204;
+                        colors[offset + 2] = 0;
+                    }
+                } else {
+                    colors[offset] = 38;
+                    colors[offset + 1] = 42;
+                    colors[offset + 2] = 48;
+                }
+            }
+            points.geometry.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3));
+            points.geometry.getAttribute('color').needsUpdate = true;
+            this.state.config.pointColorMode = ColorModeEnum.RGB;
+            (points.material as PointsMaterial).setUniforms({ colorMode: ColorModeEnum.RGB });
+            this.pc.render();
+            this.showMsg(
+                'info',
+                `${targetClass} ${errorType === 'FP' ? '误检' : '漏检'}：高亮 ${highlighted} 个点`,
+            );
+        } catch (error) {
+            console.error('Load OCC evaluation error overlay failed', error);
+            this.showMsg('warning', '该评估没有可用的 OCC 空间差异文件，请重新运行评估');
+        }
     }
 
     private async ensureEvaluationFrameObjects() {

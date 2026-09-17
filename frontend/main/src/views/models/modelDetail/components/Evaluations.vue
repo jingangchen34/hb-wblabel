@@ -157,8 +157,8 @@
               <td>{{ selectedOccClassGroup.iou == null ? '-' : formatRate(selectedOccClassGroup.iou) }}</td>
               <td>{{ selectedOccClassGroup.TP }} / {{ selectedOccClassGroup.FP }} / {{ selectedOccClassGroup.FN }}</td>
               <td class="safety-metrics__actions">
-                <Button size="small" :disabled="!selectedOccClassGroup.falsePositiveDataIds?.length" @click="openEvaluationFrames(selectedOccClassGroup.falsePositiveDataIds, selectedOccClassGroup.className)">FP {{ selectedOccClassGroup.falsePositiveDataIds?.length || 0 }} 帧</Button>
-                <Button size="small" :disabled="!selectedOccClassGroup.missedDataIds?.length" @click="openEvaluationFrames(selectedOccClassGroup.missedDataIds, selectedOccClassGroup.className)">Miss {{ selectedOccClassGroup.missedDataIds?.length || 0 }} 帧</Button>
+                <Button size="small" :disabled="!selectedOccClassGroup.falsePositiveDataIds?.length" @click="openEvaluationFrames(selectedOccClassGroup.falsePositiveDataIds, selectedOccClassGroup.className, 'FP')">FP {{ selectedOccClassGroup.falsePositiveDataIds?.length || 0 }} 帧</Button>
+                <Button size="small" :disabled="!selectedOccClassGroup.missedDataIds?.length" @click="openEvaluationFrames(selectedOccClassGroup.missedDataIds, selectedOccClassGroup.className, 'MISS')">Miss {{ selectedOccClassGroup.missedDataIds?.length || 0 }} 帧</Button>
               </td>
             </tr></tbody>
           </table>
@@ -445,7 +445,7 @@
         color: markerColors[index],
       })),
   );
-  const openEvaluationFrames = (dataIds: Array<number | string>, targetClass: string) => {
+  const openEvaluationFrames = (dataIds: Array<number | string>, targetClass: string, occErrorType?: 'FP' | 'MISS') => {
     const record = selectedMetricsRecord.value;
     if (!record || !dataIds?.length) return;
     const frameSetKey = `evaluation-frame-set:${record.id}:${Date.now()}`;
@@ -459,6 +459,7 @@
       showEvaluation: 1,
       evaluationFrameSetKey: frameSetKey,
       evaluationTargetClass: targetClass,
+      ...(occErrorType ? { evaluationOccErrorType: occErrorType } : {}),
     }, props.datasetType);
   };
 

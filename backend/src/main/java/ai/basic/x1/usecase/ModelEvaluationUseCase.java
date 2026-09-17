@@ -116,6 +116,24 @@ public class ModelEvaluationUseCase {
             throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Evaluation record does not exist.");
         }
         modelEvaluationRecordDAO.getBaseMapper().softDeleteById(id, userId);
+        cleanupEvaluationArtifacts(id);
+    }
+
+    public byte[] getOccErrorMask(Long evaluationId, Long dataId) {
+        var record = modelEvaluationRecordDAO.getById(evaluationId);
+        if (record == null || record.getDataIds() == null || record.getDataIds().stream()
+                .noneMatch(value -> String.valueOf(dataId).equals(String.valueOf(value)))) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR, "Evaluation frame does not exist.");
+        }
+        var response = HttpRequest.get(evaluationServiceBase() + "/error-mask")
+                .form("evaluationId", evaluationId)
+                .form("dataId", dataId)
+                .timeout(60_000)
+                .execute();
+        if (response.getStatus() != HttpStatus.HTTP_OK) {
+            throw new UsecaseException("OCC error visualization is unavailable for this frame.");
+        }
+        return response.bodyBytes();
     }
 
     public ModelEvaluationCompareDTO compare(Long evaluationId, Long dataId) {
@@ -300,6 +318,21 @@ public class ModelEvaluationUseCase {
             return "pointpillars";
         }
         return "fusiondet";
+    }
+
+    private String evaluationServiceBase() {
+        return StrUtil.removeSuffix(evaluationUrl, "/evaluate");
+    }
+
+    private void cleanupEvaluationArtifacts(Long evaluationId) {
+        try {
+            HttpRequest.post(evaluationServiceBase() + "/cleanup")
+                    .body(new JSONObject().set("evaluationId", evaluationId).toString(), ContentType.JSON.getValue())
+                    .timeout(2 * 60 * 1000)
+                    .execute();
+        } catch (Exception ignored) {
+            // Evaluation deletion must remain successful if best-effort artifact cleanup fails.
+        }
     }
     private void updateStatus(Long id, RunStatusEnum status, String errorReason, Long userId) {
         modelEvaluationRecordDAO.updateById(ModelEvaluationRecord.builder()

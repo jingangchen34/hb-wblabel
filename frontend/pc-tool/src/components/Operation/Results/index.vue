@@ -15,6 +15,11 @@
                     <span class="evaluation-filter pred">Pred</span>
                 </a-checkbox>
             </div>
+            <div v-if="occErrorType" class="occ-error-legend">
+                <span class="occ-error-legend__swatch" :class="occErrorType.toLowerCase()"></span>
+                <span>{{ evaluationTargetClass }} {{ occErrorType === 'FP' ? '误检位置' : '漏检位置' }}</span>
+                <span class="occ-error-legend__hint">灰色为上下文点云</span>
+            </div>
             <div v-else class="filter-wrap">
                 <a-select
                     :disabled="editor.state.status === StatusType.Play"
@@ -78,6 +83,8 @@
     let $$ = editor.bindLocale(locale);
     let { state } = editor;
     const isEvaluationMode = computed(() => !!editor.bsState.query.showEvaluation);
+    const occErrorType = computed(() => String(editor.bsState.query.evaluationOccErrorType || '').toUpperCase());
+    const evaluationTargetClass = computed(() => editor.bsState.query.evaluationTargetClass || '');
 
     let filterTabs = computed(() => {
         let { FILTER_ALL } = state.config;
@@ -213,6 +220,29 @@
 
             .evaluation-filter.pred {
                 color: #ef4444;
+            }
+        }
+        .occ-error-legend {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 28px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 13px;
+
+            &__swatch {
+                width: 12px;
+                height: 12px;
+                border-radius: 2px;
+                background: #ffcc00;
+
+                &.fp {
+                    background: #ff2d2d;
+                }
+            }
+
+            &__hint {
+                color: rgba(255, 255, 255, 0.5);
             }
         }
         .filter-wrap {

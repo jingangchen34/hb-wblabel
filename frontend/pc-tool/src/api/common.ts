@@ -50,6 +50,18 @@ export async function getModelEvaluationCompare(evaluationId: string | number, d
     return res?.data || res;
 }
 
+export async function getEvaluationOccErrorMask(
+    evaluationId: string | number,
+    dataId: string | number,
+) {
+    const blob = await get<Blob>(
+        `/api/modelEvaluation/${evaluationId}/data/${dataId}/occ-error-mask`,
+        null,
+        { responseType: 'blob' },
+    );
+    return new Uint8Array(await blob.arrayBuffer());
+}
+
 export async function getModelEvaluationCompareBatch(
     evaluationId: string | number,
     dataIds: string[],
