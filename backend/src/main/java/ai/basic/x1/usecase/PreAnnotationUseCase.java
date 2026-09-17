@@ -88,11 +88,19 @@ public class PreAnnotationUseCase {
 
     private PreAnnotationFrameDTO frame(PreAnnotationRecord record, Long id, Long dataId) {
         var predictions = new ArrayList<cn.hutool.json.JSONObject>();
-        var framePredictions = record.getPredictions() == null
+        var committed = record.getCommittedDataIds() != null && record.getCommittedDataIds().stream()
+                .anyMatch(value -> String.valueOf(dataId).equals(String.valueOf(value)));
+        var framePredictions = committed || record.getPredictions() == null
                 ? null : record.getPredictions().getJSONArray(String.valueOf(dataId));
-        if (framePredictions != null)
+        if (framePredictions != null) {
             framePredictions.forEach(v -> predictions.add(JSONUtil.parseObj(v)));
-        var occ = record.getOccArtifacts() == null ? null : record.getOccArtifacts().getJSONObject(String.valueOf(dataId));
+        }
+        // Once a frame has been committed, its durable dataset resources are the
+        // source of truth. The temporary inference artifacts may be removed when
+        // the task finishes, so returning their URLs here makes reopened frames
+        // fail inconsistently (review overrides survive, untouched frames do not).
+        var occ = committed || record.getOccArtifacts() == null
+                ? null : record.getOccArtifacts().getJSONObject(String.valueOf(dataId));
         return PreAnnotationFrameDTO.builder().preAnnotationId(id).dataId(dataId).predictions(predictions).occArtifact(occ).build();
     }
 
