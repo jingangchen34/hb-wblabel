@@ -58,11 +58,13 @@
         <Form.Item v-if="isPointPillarsModel" label="Model Input Dim" required>
           <InputNumber v-model:value="evaluateForm.modelInputDim" :min="1" :max="16" :precision="0" />
         </Form.Item>
-        <Form.Item v-if="isPointPillarsModel" label="PointPillars Config" required>
-          <Input v-model:value="evaluateForm.configPath" placeholder="/home/user/.../xyres_0.16_raw.proto" />
+        <Form.Item :label="isPointPillarsModel ? 'PointPillars Config' : 'FusionDet Config'" required>
+          <Input v-if="isPointPillarsModel" v-model:value="evaluateForm.configPath" placeholder="/home/user/.../xyres_0.16_raw.proto" />
+          <AutoComplete v-else v-model:value="evaluateForm.configPath" :options="fusionDetConfigOptions" placeholder="选择或输入 FusionDet config 绝对路径" />
         </Form.Item>
-        <Form.Item v-if="isPointPillarsModel" label="PointPillars Weight Path" required>
-          <Input v-model:value="evaluateForm.checkpointPath" placeholder="Directory: latest 15; .tckpt file: single weight" />
+        <Form.Item :label="isPointPillarsModel ? 'PointPillars Weight Path' : 'FusionDet 权重'" required>
+          <Input v-if="isPointPillarsModel" v-model:value="evaluateForm.checkpointPath" placeholder="Directory: latest 15; .tckpt file: single weight" />
+          <AutoComplete v-else v-model:value="evaluateForm.checkpointPath" :options="fusionDetCheckpointOptions" placeholder="选择或输入 FusionDet checkpoint 绝对路径" />
         </Form.Item>
         <Form.Item v-if="isPointPillarsModel" label="Best Epoch Classes">
           <Select
@@ -76,6 +78,12 @@
             </Select.Option>
           </Select>
         </Form.Item>
+        <div v-if="!isPointPillarsModel" class="evaluations__hint">
+          mIoU 使用 OCC 真值；需要按类别查看漏检/误检帧时请同时选择 mAP，并使用包含 OD head 的 OD+OCC config。
+        </div>
+        <div v-if="!isPointPillarsModel && isOccOnlyConfig && evaluateForm.metrics.includes('mAP')" class="evaluations__warning">
+          当前是 OCC-only config，通常不会输出检测框；请取消 mAP 或改选 OD+OCC config。
+        </div>
         <div class="evaluations__count">Selected frames: {{ matchedCount }}</div>
       </Form>
     </Modal>
@@ -143,7 +151,7 @@
 </template>
 <script lang="tsx" setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue';
-  import { Checkbox, Form, Input, InputNumber, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
+  import { AutoComplete, Checkbox, Form, Input, InputNumber, Modal, Radio, Select, Table, Tag } from 'ant-design-vue';
   import { Button } from '/@@/Button';
   import { getDateTime } from '/@/utils/business/timeFormater';
   import { goToTool } from '/@/utils/business';
@@ -184,6 +192,23 @@
     modelInputDim: 4,
     checkpointSelectionClasses: [] as string[],
   };
+  const fusionDetDefaults = {
+    configPath: '/home/user/cjg/code/fusiondet/configs/conch_and_xinchi_occ/sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py',
+    checkpointPath: '/home/user/cjg/code/fusiondet/work_dirs/occ/epoch_20_ema.pth',
+    sourcePointDim: 6,
+  };
+  const fusionDetConfigOptions = [
+    'sanet-point-pillar02-centerhead-conch-11cls-fp16_occ.py',
+    'sanet-point-pillar02-centerhead-dataset-all-occ-only.py',
+    'sanet-point-pillar02-centerhead-dataset-all-occ03x03x04-only-full.py',
+    'sanet-point-pillar02-centerhead-dust-noise-occ-only-full.py',
+    'sanet-point-pillar02-centerhead-dust-noise-occ-only.py',
+  ].map((name) => ({ value: `/home/user/cjg/code/fusiondet/configs/conch_and_xinchi_occ/${name}` }));
+  const fusionDetCheckpointOptions = [
+    '/home/user/cjg/code/fusiondet/work_dirs/occ/epoch_20_ema.pth',
+    '/home/user/cjg/code/fusiondet/work_dirs/dataset_all_occ/epoch_20_ema.pth',
+    '/home/user/cjg/code/fusiondet/work_dirs/dust_noise_occ_only_full/epoch_20_ema.pth',
+  ].map((value) => ({ value }));
   const checkpointClassOptions = [
     { label: 'Car', value: 'car' },
     { label: 'Cone', value: 'cone' },
@@ -214,6 +239,7 @@
     const text = [overview.name, overview.url, overview.description, overview.scenario].join(' ').toLowerCase();
     return text.includes('pointpillar') || text.includes('point_pillar') || text.includes('pp_data');
   });
+  const isOccOnlyConfig = computed(() => /occ(?:03x03x04)?-only|occ_only/i.test(evaluateForm.configPath || ''));
 
   const statusColor = {
     STARTED: 'blue',
@@ -237,12 +263,11 @@
 
   const safetyGroups = computed<any[]>(() => {
     const metrics = selectedMetricsRecord.value?.metrics;
-    const classesWithAp = new Set(
-      (metrics?.perClass || [])
-        .filter((row: any) => Number(row.AP || 0) > 0)
-        .map((row: any) => row.className),
+    return (metrics?.safetyThresholds || []).filter((group: any) =>
+      (group?.groundTruthFrameCounts || []).length > 0
+      || (group?.thresholdEvents || []).length > 0
+      || (group?.recommendations || []).length > 0,
     );
-    return (metrics?.safetyThresholds || []).filter((group: any) => classesWithAp.has(group.className));
   });
   const selectedSafetyGroup = computed(() =>
     safetyGroups.value.find((group: any) => group.className === selectedSafetyClass.value) || safetyGroups.value[0],
@@ -578,8 +603,15 @@
         Object.assign(evaluateForm, pointPillarsDefaults);
         window.localStorage.removeItem(`pointpillars-evaluation:${props.modelId}`);
       }
-    } else if (!evaluateForm.metrics.includes('miou')) {
+    } else {
       evaluateForm.metrics = ['mAP', 'miou'];
+      try {
+        const saved = window.localStorage.getItem(`fusiondet-evaluation:${props.modelId}`);
+        Object.assign(evaluateForm, fusionDetDefaults, saved ? JSON.parse(saved) : {});
+      } catch {
+        Object.assign(evaluateForm, fusionDetDefaults);
+        window.localStorage.removeItem(`fusiondet-evaluation:${props.modelId}`);
+      }
     }
     evaluateVisible.value = true;
     await loadDatasetOptions();
@@ -594,8 +626,8 @@
       createMessage.warning('Please select eval metrics.');
       return;
     }
-    if (isPointPillarsModel.value && (!evaluateForm.configPath.trim() || !evaluateForm.checkpointPath.trim())) {
-      createMessage.warning('Please provide the PointPillars config and weight path.');
+    if (!evaluateForm.configPath.trim() || !evaluateForm.checkpointPath.trim()) {
+      createMessage.warning(`Please provide the ${isPointPillarsModel.value ? 'PointPillars' : 'FusionDet'} config and weight path.`);
       return;
     }
     if (!evaluateForm.sourcePointDim || (isPointPillarsModel.value && (!evaluateForm.modelInputDim || evaluateForm.modelInputDim > evaluateForm.sourcePointDim))) {
@@ -635,6 +667,15 @@
             checkpointSelectionClasses: evaluateForm.checkpointSelectionClasses,
           }),
         );
+      } else {
+        window.localStorage.setItem(
+          `fusiondet-evaluation:${props.modelId}`,
+          JSON.stringify({
+            configPath: evaluateForm.configPath,
+            checkpointPath: evaluateForm.checkpointPath,
+            sourcePointDim: evaluateForm.sourcePointDim,
+          }),
+        );
       }
       createMessage.success('Evaluation task created.');
       evaluateVisible.value = false;
@@ -670,6 +711,20 @@
     &__count {
       font-size: 13px;
       color: #666;
+    }
+
+    &__hint,
+    &__warning {
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+
+    &__hint {
+      color: #666;
+    }
+
+    &__warning {
+      color: #d48806;
     }
   }
 

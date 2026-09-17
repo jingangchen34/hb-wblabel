@@ -239,6 +239,14 @@ def ensure_link_or_copy(source: Path, target: Path) -> None:
             shutil.copy2(source, target)
 
 
+def link_occ_labels(source: Path, target: Path) -> None:
+    """Expose source .label files without letting evaluation write beside them."""
+    if not source.is_dir():
+        return
+    for label_path in source.rglob("*.label"):
+        ensure_link_or_copy(label_path, target / label_path.relative_to(source))
+
+
 def collect_content_file_ids(content: list[dict[str, Any]]) -> list[int]:
     ids: list[int] = []
     for item in content:
@@ -369,13 +377,14 @@ def write_converter_helper(helper_path: Path) -> None:
         'parser.add_argument("--root", required=True)',
         'parser.add_argument("--prefix", required=True)',
         'parser.add_argument("--metrics", default="mAP")',
+        'parser.add_argument("--point-dim", type=int, default=7)',
         "args = parser.parse_args()",
         "",
         "sys.path.insert(0, args.fusiondet_root)",
         "from tools.data_converter.sanet_per2_converter import create_per2_infos",
         "",
         'metrics = set(args.metrics.split(","))',
-        'options = {"dataset": "conch", "keep_empty": True, "class_map": None}',
+        'options = {"dataset": "conch", "keep_empty": True, "class_map": None, "point_dim": args.point_dim}',
         'if "miou" in metrics:',
         "    options.update({",
         '        "task": "occ",',
@@ -389,7 +398,12 @@ def write_converter_helper(helper_path: Path) -> None:
     helper_path.write_text("\n".join(helper), encoding="utf-8")
 
 
-def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) -> tuple[Path, list[int], int]:
+def build_eval_pkl(
+    evaluation_id: int,
+    data_ids: list[int],
+    metrics: list[str],
+    point_dim: int | None = None,
+) -> tuple[Path, list[int], int]:
     frames = fetch_platform_frames(data_ids)
     gt_map = fetch_gt_objects(data_ids)
     ordered_data_ids: list[int] = []
@@ -407,16 +421,25 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
     files = fetch_file_paths(sorted(set(all_file_ids)))
 
     scenes: dict[Path, dict[str, Any]] = {}
+    skipped_missing_points: list[str] = []
     for data_id in data_ids:
         frame = frames.get(int(data_id))
         if not frame:
             continue
         source = frame_source_files(frame, files)
+        lidar_abs = resolve_external_path(source["lidar"])
+        if not lidar_abs.is_file():
+            skipped_missing_points.append(f"{data_id}:{lidar_abs}")
+            continue
         clip_root = infer_clip_root(source["lidar"])
         scene = scenes.setdefault(clip_root, {"frames": [], "sources": []})
         scene["frames"].append(frame)
         scene["sources"].append(source)
         ordered_data_ids.append(int(data_id))
+
+    if not scenes:
+        details = "; ".join(skipped_missing_points[:5])
+        raise RuntimeError(f"No readable point-cloud frames were found for evaluation. {details}")
 
     scene_names: list[str] = []
     miou_count = 0
@@ -436,10 +459,16 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
         ensure_link_or_copy(calib_source, scene_dir / "calib_cylindrical.json")
         ensure_link_or_copy(calib_source, scene_dir / "calib.json")
         valid_camera_names = valid_calib_cameras(calib_source)
+        synthesize_identity_pose = False
         if (clip_abs / "pose.json").exists():
             ensure_link_or_copy(clip_abs / "pose.json", scene_dir / "pose.json")
         else:
-            raise RuntimeError(f"Missing pose.json for clip {clip_abs}")
+            # Evaluation uses single-frame point clouds (max_sweeps=0).  Pose is
+            # therefore not needed for temporal aggregation, but the upstream
+            # converter still requires the file.  Use an identity pose for
+            # lidar/camera timestamps so clips converted without pose.json can
+            # still be evaluated in their native lidar coordinate frame.
+            synthesize_identity_pose = True
         if (clip_abs / "meta.json").exists():
             ensure_link_or_copy(clip_abs / "meta.json", scene_dir / "meta.json")
         if (clip_abs / "log.json").exists():
@@ -449,7 +478,7 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
         anno_dir = scene_dir / "anno"
         anno_dir.mkdir(parents=True, exist_ok=True)
         if (clip_abs / "anno" / "occ_labels").exists():
-            ensure_link_or_copy(clip_abs / "anno" / "occ_labels", anno_dir / "occ_labels")
+            link_occ_labels(clip_abs / "anno" / "occ_labels", anno_dir / "occ_labels")
 
         obstacle: dict[str, Any] = {}
         keys: list[str] = []
@@ -465,6 +494,26 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
             obstacle[key]["next_time_file"] = keys[index + 1] if index + 1 < len(keys) else ""
         obstacle["first_frame"] = keys[0] if keys else ""
         (anno_dir / "obstacle_3d.json").write_text(json.dumps(obstacle, ensure_ascii=False), encoding="utf-8")
+        if synthesize_identity_pose:
+            pose_keys: set[str] = set()
+            for key in keys:
+                entry = obstacle[key]
+                for value in (entry.get("timestamp"), entry.get("ego_file")):
+                    if value not in (None, ""):
+                        pose_keys.add(str(value))
+                for camera in (entry.get("cam_files") or {}).values():
+                    value = camera.get("ego_time") if isinstance(camera, dict) else None
+                    if value not in (None, ""):
+                        pose_keys.add(str(value))
+            identity_pose = {
+                key: {"translation": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0]}
+                for key in pose_keys
+            }
+            identity_pose["globe_pose"] = {
+                "translation": [0.0, 0.0, 0.0],
+                "rotation": [1.0, 0.0, 0.0, 0.0],
+            }
+            (scene_dir / "pose.json").write_text(json.dumps(identity_pose), encoding="utf-8")
 
     train_val = {"train_file": [], "val_file": scene_names}
     (dataset_root / "train_val.json").write_text(json.dumps(train_val, ensure_ascii=False), encoding="utf-8")
@@ -480,6 +529,7 @@ def build_eval_pkl(evaluation_id: int, data_ids: list[int], metrics: list[str]) 
         "--root", str(dataset_root),
         "--prefix", prefix,
         "--metrics", ",".join(metrics),
+        "--point-dim", str(point_dim or 7),
     ]
     helper_env = os.environ.copy()
     helper_env.setdefault("NUMBA_DISABLE_CACHE", "1")
@@ -1251,7 +1301,7 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
     metrics = [str(metric) for metric in payload.get("metrics") or ["mAP", "miou"] if str(metric) in {"mAP", "miou"}]
     if not metrics:
         metrics = ["mAP", "miou"]
-    ann_file, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, metrics)
+    ann_file, ordered_data_ids, miou_count = build_eval_pkl(evaluation_id, data_ids, metrics, load_dim)
     work_dir = WORK_ROOT / f"eval_{evaluation_id}"
     outputs_path = work_dir / f"eval_{evaluation_id}_outputs.pkl"
     log_path = work_dir / "eval.log"
@@ -1294,9 +1344,11 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
         class_names = list(getattr(mod, "class_names", []))
     except Exception:
         class_names = None
+    parsed_metrics = parse_metrics(completed.stdout, work_dir)
+    attach_safety_data_ids(parsed_metrics, ordered_data_ids)
     predictions = predictions_from_outputs(outputs_path, ordered_data_ids, class_names)
     return {
-        "metrics": {**parse_metrics(completed.stdout, work_dir), "requested": metrics, "loadDim": load_dim},
+        "metrics": {**parsed_metrics, "requested": metrics, "loadDim": load_dim},
         "miouDataCount": miou_count,
         "outputPath": str(outputs_path),
         "logPath": str(log_path),
