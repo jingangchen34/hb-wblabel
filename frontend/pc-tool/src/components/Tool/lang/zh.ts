@@ -28,6 +28,7 @@ const zh: ILocale = {
     title_create3DBox: '创建立方体(3D)',
     title_translate: '移动',
     title_track: '辅助线',
+    title_point_measure: '点云测量',
     title_filter2D: '过滤2D显示',
     title_model: '跑模型',
     title_3d_default: '手动框',
@@ -58,6 +59,9 @@ const zh: ILocale = {
     measure: '辅助线(N)',
     measure_add: '添加一条辅助线',
     measure_radius: '半径(m)',
+    point_measure_hint: '单击点云选择两点；右键或 Esc 清除',
+    point_measure_point_mode: '点坐标',
+    point_measure_distance_mode: '两点连线',
 
     btn_msg: '信息',
     btn_setting: '显示',

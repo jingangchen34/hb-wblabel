@@ -68,6 +68,10 @@ export default function useTool() {
             case 'track':
                 config.activeTrack = !config.activeTrack;
                 break;
+            case 'pointMeasure':
+                config.activePointMeasure = !config.activePointMeasure;
+                editor.pc.render();
+                break;
             case 'model':
                 onModel();
                 break;

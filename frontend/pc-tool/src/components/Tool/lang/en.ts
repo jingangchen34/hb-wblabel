@@ -26,6 +26,7 @@ const en = {
     title_create3DBox: 'Create Box(3D)',
     title_translate: 'Translate',
     title_track: 'Track Line',
+    title_point_measure: 'Point Measurement',
     title_filter2D: 'Filter other object in 2d view',
     title_model: 'Run Model',
     title_3d_default: 'Manual',
@@ -56,6 +57,9 @@ const en = {
     measure: 'Distance Measure(N)',
     measure_add: 'Add a Measure',
     measure_radius: 'Radius(m)',
+    point_measure_hint: 'Click two cloud points; right-click or Esc to clear',
+    point_measure_point_mode: 'Point coordinate',
+    point_measure_distance_mode: 'Two-point line',
 
     btn_msg: 'Info',
     btn_setting: 'Setting',

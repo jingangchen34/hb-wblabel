@@ -235,6 +235,7 @@ export interface IConfig {
     activeAnnotation: boolean;
     activeTranslate: boolean;
     activeTrack: boolean;
+    activePointMeasure: boolean;
     circleRadius: number;
     activeHelper2d: IHelper2D[];
     // project

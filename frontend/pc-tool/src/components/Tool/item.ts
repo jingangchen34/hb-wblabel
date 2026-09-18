@@ -170,6 +170,19 @@ export const allItems: IItemConfig[] = [
     //     },
     // },
     {
+        action: 'pointMeasure',
+        title: ($$) => $$('title_point_measure'),
+        getIcon: function () {
+            return 'iconfont icon-fuzhuxian';
+        },
+        isDisplay: function (editor: Editor) {
+            return !editor.state.config.showSingleImgView;
+        },
+        isActive: function (editor: Editor) {
+            return editor.state.config.activePointMeasure;
+        },
+    },
+    {
         action: 'model',
         // label: 'Model',
         title: ($$) => $$('title_model'),

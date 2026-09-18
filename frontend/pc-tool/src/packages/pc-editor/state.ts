@@ -123,6 +123,7 @@ function getDefaultConfig(): IConfig {
         activeAnnotation: false,
         activeTranslate: false,
         activeTrack: false,
+        activePointMeasure: false,
         circleRadius: 100,
         activeHelper2d: ['aux_line'],
         // project
